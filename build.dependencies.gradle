@@ -1,0 +1,21 @@
+repositories {
+    mavenCentral()
+    google() // Needed for androidx
+    maven { url 'https://www.jitpack.io' }
+    maven { url = 'https://maven.brott.dev/'}
+}
+
+dependencies {
+    implementation 'org.firstinspires.ftc:Inspection:12.0.0'
+    implementation 'org.firstinspires.ftc:Blocks:12.0.0'
+    implementation 'org.firstinspires.ftc:RobotCore:12.0.0'
+    implementation 'org.firstinspires.ftc:RobotServer:12.0.0'
+    implementation 'org.firstinspires.ftc:OnBotJava:12.0.0'
+    implementation 'org.firstinspires.ftc:Hardware:12.0.0'
+    implementation 'org.firstinspires.ftc:FtcCommon:12.0.0'
+    implementation 'org.firstinspires.ftc:Vision:12.0.0'
+    implementation 'com.github.Weaponboy:Nexus_Pathing:v4.0.6'
+    implementation 'com.github.Weaponboy:Nexus_Command_Base:v0.0.2'
+    implementation 'androidx.appcompat:appcompat:1.2.0'
+}
+
