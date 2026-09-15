@@ -1,5 +1,8 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.State;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class FealdState {
 
 
@@ -51,7 +54,8 @@ public class FealdState {
 
     //Posable pikup
     public double NumberOfPosablePikups;
-    //Todo add a List
+    List Ballxpos = new ArrayList();
+    List Ballypos = new ArrayList();
 
 
 
