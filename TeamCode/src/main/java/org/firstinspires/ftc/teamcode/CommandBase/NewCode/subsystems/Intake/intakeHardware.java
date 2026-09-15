@@ -1,6 +1,9 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake;
 
+import static org.firstinspires.ftc.robotcore.external.BlocksOpModeCompanion.hardwareMap;
+
 import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DcMotorEx;
 
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Drivebase.DriveBase;
 
@@ -9,8 +12,7 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 
 public class intakeHardware extends SubSystem {
 
-    IMotor = hardwareMap.get(DcMotorEx.class,"turet")
-    IMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER)
+    DcMotorEx IMotor;
 
     enum intakeState {
         off,
@@ -24,10 +26,12 @@ public class intakeHardware extends SubSystem {
 
     double power = IMotor.getPower();
 
+    //double speed = IMotor.getSpeed()
 
     @Override
     public void init() {
-
+        IMotor = hardwareMap.get(DcMotorEx.class,"Intake");
+        IMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
     }
 
     @Override
@@ -35,16 +39,34 @@ public class intakeHardware extends SubSystem {
 
         IMotor.update(power);
 
+        //planed to control intake with gamepad??
         if(State == intakeState.off) {
-            //off
+
+            IMotor.setPower(0);
         } else if (State == intakeState.idle) {
-            //on (not up to speed??)
+
+            // x place holder for intaking speed
+            if (speed < x) {
+                intakeState State = intakeState.idle;
+            } else if (speed >= x) {
+                intakeState State = intakeState.intaking;
+            }
         } else if (State == intakeState.intaking) {
-            //on more power?
+
+            IMotor.setPower(1);
+            if (speed < x) {
+                intakeState State = intakeState.idle;
+            } else if (speed >= x) {
+                intakeState State = intakeState.intaking;
+            }
         } else if (State == intakeState.ejecting){
-            // im not sure
+            IMotor.setPower(-1);
         } else if (State == intakeState.transfering){
-            //still not sure...
+            if () {
+
+            }
+        } else {
+            intakeState State = intakeState.off;
         }
 
     }
@@ -53,4 +75,3 @@ public class intakeHardware extends SubSystem {
 
 
 }
-
