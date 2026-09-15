@@ -18,7 +18,7 @@ public class intakeHardware extends SubSystem {
     }
     intakeState State = intakeState.off;
 
-    double power = IMotor.update() ;
+    double power = IMotor.getPower();
 
 
     @Override
