@@ -41,6 +41,12 @@ public class DriveBase extends SubSystem {
         registerSubsystem(opModeEX, driveCommand);
     }
 
+    enum alliance_side {
+        blue,
+        red
+    }
+    alliance_side Alliance = alliance_side.blue;
+
     @Override
     public void init() {
         LF.initMotor("LF", getOpMode().hardwareMap);
@@ -124,8 +130,14 @@ public class DriveBase extends SubSystem {
     }
 
     public void driveFieldCentric(double drive, double strafe, double turn, double robotHeading) {
+        double headingOffset ;
+        if (Alliance == alliance_side.blue) {
+            headingOffset = -270 ;
+        } else {
+             headingOffset = - 90 ;
+        }
         // Convert degrees → radians (most common IMU method in FTC)
-        double headingRadians = Math.toRadians(robotHeading);
+        double headingRadians = Math.toRadians(robotHeading + headingOffset);
 
         // Now rotate the translation vector opposite to the robot's heading
         double rotX = strafe * Math.cos(-headingRadians) - drive * Math.sin(-headingRadians);
