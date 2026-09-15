@@ -38,7 +38,7 @@ public class DriveBase extends SubSystem {
 
     PIDController headingPID = new PIDController(0.025, 0, 0.0003);
 
-    double vertikal;
+    double vertical;
     double turn;
     double strafe;
     public boolean tele = true;
@@ -75,25 +75,13 @@ public class DriveBase extends SubSystem {
 
     @Override
     public void execute() {
-        long start = System.nanoTime();
         executeEX();
-
-        if (engage) {
-            pto1.setPosition(0.64);
-            pto2.setPosition(0.32);
-            baseServo.setPosition(35);
-        } else {
-            pto1.setPosition(0.5);
-            pto2.setPosition(0.5);
-            baseServo.setPosition(0);
-        }
-        ((OpModeEX) getOpMode()).profiler.recordDuration(LoopProfiler.DRIVE_BASE, System.nanoTime() - start);
     }
 
     public Command drivePowers(double vertical, double turn, double strafe) {
         this.turn = turn;
         this.strafe = strafe;
-        this.vertikal = vertical;
+        this.vertical = vertical;
 
         return driveCommand;
 
@@ -102,7 +90,7 @@ public class DriveBase extends SubSystem {
     public Command drivePowers(RobotPower power) {
         this.turn = power.getPivot();
         this.strafe = -power.getVertical();
-        this.vertikal = -power.getHorizontal();
+        this.vertical = -power.getHorizontal();
 
         return driveCommand;
     }
@@ -112,12 +100,12 @@ public class DriveBase extends SubSystem {
             },
             () -> {
                 long start = System.nanoTime();
-                double denominator = Math.max(1.0, Math.abs(vertikal) + Math.abs(strafe) + Math.abs(turn));
+                double denominator = Math.max(1.0, Math.abs(vertical) + Math.abs(strafe) + Math.abs(turn));
 
-                double lfT = ((vertikal - strafe - turn) / denominator) * speed;
-                double rfT = ((vertikal + strafe + turn) / denominator) * speed;
-                double lbT = ((vertikal + strafe - turn) / denominator) * speed;
-                double rbT = ((vertikal - strafe + turn) / denominator) * speed;
+                double lfT = ((vertical - strafe - turn) / denominator) * speed;
+                double rfT = ((vertical + strafe + turn) / denominator) * speed;
+                double lbT = ((vertical + strafe - turn) / denominator) * speed;
+                double rbT = ((vertical - strafe + turn) / denominator) * speed;
 
                 if (!engage) {
                     LF.update(lfT);
