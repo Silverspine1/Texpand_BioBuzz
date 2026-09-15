@@ -41,26 +41,17 @@ public class intakeHardware extends SubSystem {
         if(State == intakeState.off) {
 
             power = 0;
-        } else if (State == intakeState.idle) {
 
-            // x place holder for intaking speed
-            if (speed < x) {
-                intakeState State = intakeState.idle;
-            } else if (speed >= x) {
-                intakeState State = intakeState.intaking;
-            }
         } else if (State == intakeState.intaking) {
 
             power = 1;
-            if (speed < x) {
-                intakeState State = intakeState.idle;
-            } else if (speed >= x) {
-                intakeState State = intakeState.intaking;
-            }
+
         } else if (State == intakeState.ejecting){
+
             power = -1;
+
         } else if (State == intakeState.transfering){
-            if () {
+            //depends souly on the mec
 
             }
         } else {
