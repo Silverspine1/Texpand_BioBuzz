@@ -1,12 +1,16 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake;
 
+import com.qualcomm.robotcore.hardware.DcMotor;
+
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Drivebase.DriveBase;
 
 import dev.weaponboy.nexus_command_base.Hardware.MotorEx;
 import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 
 public class intakeHardware extends SubSystem {
-    MotorEx IMotor = new MotorEx();
+
+    IMotor = hardwareMap.get(DcMotorEx.class,"turet")
+    IMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER)
 
     enum intakeState {
         off,
