@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.CommandBase.Subsytems;
+package org.firstinspires.ftc.teamcode.CommandBase.old_referance;
 
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
@@ -10,6 +10,9 @@ import java.io.FileWriter;
 import java.io.IOException;
 
 
+import dev.weaponboy.nexus_pathing.Follower.Follower;
+import dev.weaponboy.nexus_pathing.PathGeneration.PathsManager;
+import dev.weaponboy.nexus_pathing.PathGeneration.commands.SectionBuilder;
 import dev.weaponboy.nexus_pathing.PathingUtility.RobotPower;
 import dev.weaponboy.nexus_pathing.RobotUtilities.RobotConfig;
 import dev.weaponboy.nexus_pathing.RobotUtilities.Vector2D;
