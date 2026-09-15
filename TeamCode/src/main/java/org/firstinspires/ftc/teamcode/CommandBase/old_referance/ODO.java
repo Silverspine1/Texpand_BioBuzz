@@ -1,24 +1,17 @@
-package org.firstinspires.ftc.teamcode.CommandBase.Subsytems;
+package org.firstinspires.ftc.teamcode.CommandBase.old_referance;
 
-import com.qualcomm.robotcore.hardware.DcMotorEx;
-
-import java.util.ArrayList;
-
-import dev.weaponboy.nexus_command_base.Hardware.DistanceSensor;
+import dev.weaponboy.nexus_command_base.Commands.LambdaCommand;
+import dev.weaponboy.nexus_command_base.Hardware.MotorEx;
 import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 
 
 public class ODO extends SubSystem {
 
-    DistanceSensor backLeft = new DistanceSensor();
-    DistanceSensor backRight = new DistanceSensor();
-    DistanceSensor right = new DistanceSensor();
 
-    ArrayList<SensorReadings> sensorReadings = new ArrayList<>();
 
-    DcMotorEx leftPod;
-    DcMotorEx rightPod;
-    DcMotorEx backPod;
+    MotorEx leftPod = new MotorEx();
+    MotorEx rightPod = new MotorEx();
+    MotorEx backPod = new MotorEx();
 
     double X, Y, Heading;
     int startHeading;
@@ -42,16 +35,9 @@ public class ODO extends SubSystem {
 
     boolean sampleReset = true;
 
-    public boolean isRunningDistanceSensorReset() {
-        return runningDistanceSensorReset;
-    }
 
-    public void runDistanceSensorReset(boolean sampleReset) {
-        runningDistanceSensorReset = true;
-        this.sampleReset = sampleReset;
-        resetCounter = 0;
-        sensorReadings.clear();
-    }
+
+
 
     boolean runningDistanceSensorReset = false;
     int resetCounter = 0;
@@ -67,19 +53,15 @@ public class ODO extends SubSystem {
 
     @Override
     public void init() {
-        leftPod = getOpModeEX().hardwareMap.get(DcMotorEx.class, "RB");
-        rightPod = getOpModeEX().hardwareMap.get(DcMotorEx.class, "RF");
-        backPod = getOpModeEX().hardwareMap.get(DcMotorEx.class, "LF");
+        leftPod.initMotor("leftPod", getOpMode().hardwareMap);
+        rightPod.initMotor("rightPod", getOpMode().hardwareMap);
+        backPod.initMotor("backPod", getOpMode().hardwareMap);
 
-        backRight.init(getOpModeEX().hardwareMap, "backRight");
-        backLeft.init(getOpModeEX().hardwareMap, "backLeft");
 
-        backRight.setOffset(-180);
-        backLeft.setOffset(-180);
 
-        right.init(getOpModeEX().hardwareMap, "right");
 
-        right.setOffset(-200);
+
+
     }
 
     public double headingError(double targetHeading){
@@ -92,70 +74,7 @@ public class ODO extends SubSystem {
         executeEX();
         updateVelocity();
 
-        if (runningDistanceSensorReset){
 
-            resetCounter++;
-            sensorReadings.add(new SensorReadings(backRight.getPosition(), backLeft.getPosition(), right.getPosition()));
-
-//            System.out.println(sensorReadings.size());
-//            System.out.println(resetCounter);
-
-            if (resetCounter > 20){
-
-                runningDistanceSensorReset = false;
-                SensorReadings averaged;
-
-                double backRight = 0;
-                double backLeft = 0;
-                double right = 0;
-
-                for (SensorReadings reading: sensorReadings){
-                    backRight += reading.getSen1();
-                    backLeft += reading.getSen2();
-                    right += reading.getSen3();
-
-//                    System.out.println(reading.getSen1());
-//                    System.out.println(reading.getSen2());
-//                    System.out.println(reading.getSen3());
-                }
-
-                averaged = new SensorReadings((backRight/resetCounter)*0.1, (backLeft/resetCounter)*0.1, (right/resetCounter)*0.1);
-
-//                System.out.println("Avg sen 1: " + averaged.getSen1());
-//                System.out.println("Avg sen 2: " + averaged.getSen2());
-//                System.out.println("Avg sen 3: " + averaged.getSen3());
-
-                final double distanceFromRobotCenterToSensor = 11;
-                final double distanceBetweenSensors = 13.2;
-
-                double readingDifference = averaged.getSen2() - averaged.getSen1();
-
-                double headingError = Math.atan(readingDifference / distanceBetweenSensors);
-
-                double newHeading;
-                double newY;
-                double newX;
-
-                if (sampleReset){
-                    newHeading = 180 + Math.toDegrees(headingError);
-
-                    newY = 360 - (Math.cos(Math.abs(headingError))*(averaged.getSen3() + distanceFromRobotCenterToSensor));
-                    newX = 360 - (((averaged.getSen1() + averaged.getSen2())/2) + 17.5);
-                }else{
-                    newHeading = 90 + Math.toDegrees(headingError);
-
-                    newX = 360 - (Math.cos(Math.abs(headingError))*(averaged.getSen3() + distanceFromRobotCenterToSensor));
-                    newY = (((averaged.getSen1() + averaged.getSen2())/2) + 17.5);
-                }
-
-
-
-                X = newX;
-                Y = newY;
-                Heading = Math.toRadians(newHeading);
-
-            }
-        }
     }
 
     public double X (){
@@ -190,14 +109,7 @@ public class ODO extends SubSystem {
 
     }
 
-    public LambdaCommand update = new LambdaCommand(
-            () -> {},
-            () -> {
-                //need to code this
-                //prob some constant accel loc code
-            },
-            () -> false
-    );
+
 
     public void offsetY(double offset){
         Y += offset;
@@ -253,12 +165,7 @@ public class ODO extends SubSystem {
             () -> true
     );
 
-    public Command resetPosition(double X, double Y, int Heading){
-        this.X = X;
-        this.Y = Y;
-        startHeading = Heading;
-        return resetPosition;
-    }
+
 
     private final LambdaCommand resetPosition = new LambdaCommand(
             () -> {},
