@@ -12,7 +12,7 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 
 public class intakeHardware extends SubSystem {
 
-    DcMotorEx IMotor;
+    MotorEx IMotor = new MotorEx();
 
     enum intakeState {
         off,
@@ -30,19 +30,17 @@ public class intakeHardware extends SubSystem {
 
     @Override
     public void init() {
-        IMotor = hardwareMap.get(DcMotorEx.class,"Intake");
-        IMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        IMotor.initMotor("IMotor", getOpMode().hardwareMap);
     }
 
     @Override
     public void execute() {
 
-        IMotor.update(power);
 
         //planed to control intake with gamepad??
         if(State == intakeState.off) {
 
-            IMotor.setPower(0);
+            power = 0;
         } else if (State == intakeState.idle) {
 
             // x place holder for intaking speed
@@ -53,14 +51,14 @@ public class intakeHardware extends SubSystem {
             }
         } else if (State == intakeState.intaking) {
 
-            IMotor.setPower(1);
+            power = 1;
             if (speed < x) {
                 intakeState State = intakeState.idle;
             } else if (speed >= x) {
                 intakeState State = intakeState.intaking;
             }
         } else if (State == intakeState.ejecting){
-            IMotor.setPower(-1);
+            power = -1;
         } else if (State == intakeState.transfering){
             if () {
 
@@ -69,6 +67,7 @@ public class intakeHardware extends SubSystem {
             intakeState State = intakeState.off;
         }
 
+        IMotor.update(power);
     }
 
 
