@@ -17,5 +17,9 @@ dependencies {
     implementation 'com.github.Weaponboy:Nexus_Pathing:v4.0.6'
     implementation 'com.github.Weaponboy:Nexus_Command_Base:v0.0.2'
     implementation 'androidx.appcompat:appcompat:1.2.0'
+    implementation('com.acmerobotics.dashboard:dashboard:0.5.1') {
+        exclude group: 'org.firstinspires.ftc'
+    }
+    implementation 'org.openftc:easyopencv:1.7.3'
 }
 
