@@ -28,7 +28,7 @@ public class intakeHardware extends SubSystem {
     ElapsedTime ReverseTimer = new ElapsedTime();
     ElapsedTime IntakeTimer = new ElapsedTime();
     intakeState State = intakeState.off;
-    boolean intakeAfterReverse =false;
+    boolean intakeAfterReverse = false;
     boolean reverse;
     double reverseTime;
     double intakeTime;
@@ -67,6 +67,7 @@ public class intakeHardware extends SubSystem {
 
         IMotor.update(currentPower);
         if (ReverseTimer.milliseconds() > reverseTime && reverse) {
+            
             ReverseTimer.reset();
             State = intakeState.ejecting;
             reverse = false;
