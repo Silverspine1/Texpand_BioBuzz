@@ -16,7 +16,6 @@ public class intakeHardware extends SubSystem {
 
     enum intakeState {
         off,
-        idle,
         intaking,
         ejecting,
         transfering
@@ -24,7 +23,7 @@ public class intakeHardware extends SubSystem {
     }
     intakeState State = intakeState.off;
 
-    double power = IMotor.getPower();
+    double currentPower = IMotor.getPower();
 
     //double speed = IMotor.getSpeed()
 
@@ -37,30 +36,29 @@ public class intakeHardware extends SubSystem {
     public void execute() {
 
 
-        //planed to control intake with gamepad??
+        //controls the motor relative to the state which will be set by a different loop
         if(State == intakeState.off) {
 
-            power = 0;
+            currentPower = 0;
 
         } else if (State == intakeState.intaking) {
 
-            power = 1;
+            currentPower = 1;
 
         } else if (State == intakeState.ejecting){
 
-            power = -1;
+            currentPower = -1;
 
         } else if (State == intakeState.transfering){
             //depends souly on the mec
 
-            }
         } else {
             intakeState State = intakeState.off;
         }
 
-        IMotor.update(power);
+        IMotor.update(currentPower);
+        
     }
-
 
 
 
