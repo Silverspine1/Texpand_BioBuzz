@@ -29,6 +29,9 @@ public class intakeHardware extends SubSystem {
     ElapsedTime IntakeTimer = new ElapsedTime();
     intakeState State = intakeState.off;
     boolean intakeAfterReverse =false;
+    boolean reverse;
+    double reverseTime;
+    double intakeTime;
 
     double currentPower = IMotor.getPower();
 
@@ -59,29 +62,29 @@ public class intakeHardware extends SubSystem {
             //depends souly on the mec
 
         } else {
-            intakeState State = intakeState.off;
+            State = intakeState.off;
         }
 
         IMotor.update(currentPower);
+        if (ReverseTimer.milliseconds() > reverseTime && reverse) {
+            ReverseTimer.reset();
+            State = intakeState.ejecting;
+            reverse = false;
+        } else if (!reverse && ReverseTimer.milliseconds() > reverseTime && State == intakeState.ejecting) {
+            State = intakeState.intaking;
+            IntakeTimer.reset();
+            intakeAfterReverse = true;
+        } else if (intakeAfterReverse && IntakeTimer.milliseconds() > intakeTime) {
+            State = intakeState.off;
+            intakeAfterReverse = false;
+        }
 
     }
 
-    public void Reverse(boolean reverse, double reverseTime, double intakeTime){
-        while (intakeAfterReverse && (State == intakeState.ejecting || State == intakeState.intaking) && reverse) {
-            if (ReverseTimer.milliseconds() > reverseTime && reverse) {
-                ReverseTimer.reset();
-                State = intakeState.ejecting;
-                reverse = false;
-            } else if (!reverse && ReverseTimer.milliseconds() > reverseTime && State == intakeState.ejecting) {
-                State = intakeState.intaking;
-                IntakeTimer.reset();
-                intakeAfterReverse = true;
-            } else if (intakeAfterReverse && IntakeTimer.milliseconds() > intakeTime) {
-                State = intakeState.off;
-                intakeAfterReverse = false;
-            }
-
-    }
+    public void Reverse(boolean Reverse, double ReverseTime, double IntakeTime){
+        this.intakeTime = IntakeTime;
+        this.reverse = Reverse;
+        this.reverseTime = ReverseTime;
 
     }
 }
