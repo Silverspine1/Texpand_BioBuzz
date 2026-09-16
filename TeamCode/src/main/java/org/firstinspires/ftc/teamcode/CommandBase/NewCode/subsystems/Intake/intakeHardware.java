@@ -1,56 +1,91 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake;
 
+import static org.firstinspires.ftc.robotcore.external.BlocksOpModeCompanion.hardwareMap;
+
 import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Drivebase.DriveBase;
 
+import dev.weaponboy.nexus_command_base.Commands.Command;
 import dev.weaponboy.nexus_command_base.Hardware.MotorEx;
 import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
+import dev.weaponboy.nexus_pathing.PathingUtility.RobotPower;
 
 public class intakeHardware extends SubSystem {
 
-    IMotor = hardwareMap.get(DcMotorEx.class,"turet")
-    IMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER)
+    MotorEx IMotor = new MotorEx();
 
     enum intakeState {
         off,
-        idle,
         intaking,
         ejecting,
         transfering
 
     }
+
+    ElapsedTime ReverseTimer = new ElapsedTime();
+    ElapsedTime IntakeTimer = new ElapsedTime();
     intakeState State = intakeState.off;
+    boolean intakeAfterReverse = false;
+    boolean reverse;
+    double reverseTime;
+    double intakeTime;
 
-    double power = IMotor.getPower();
-
+    double currentPower = IMotor.getPower();
 
     @Override
     public void init() {
-
+        IMotor.initMotor("IMotor", getOpMode().hardwareMap);
     }
 
     @Override
     public void execute() {
 
-        IMotor.update(power);
-
+        //controls the motor relative to the state which will be set by a different loop
         if(State == intakeState.off) {
-            //off
-        } else if (State == intakeState.idle) {
-            //on (not up to speed??)
+
+            currentPower = 0;
+
         } else if (State == intakeState.intaking) {
-            //on more power?
+
+            currentPower = 1;
+            //add vision imput to stop once ball has been intaked and begins to transfer
+
         } else if (State == intakeState.ejecting){
-            // im not sure
+
+            currentPower = -1;
+            //add vision imput to stop once ball has been ejected and switches to off
+
         } else if (State == intakeState.transfering){
-            //still not sure...
+            //depends souly on the mec
+
+        } else {
+            State = intakeState.off;
+        }
+
+        IMotor.update(currentPower);
+        if (ReverseTimer.milliseconds() > reverseTime && reverse) {
+            
+            ReverseTimer.reset();
+            State = intakeState.ejecting;
+            reverse = false;
+        } else if (!reverse && ReverseTimer.milliseconds() > reverseTime && State == intakeState.ejecting) {
+            State = intakeState.intaking;
+            IntakeTimer.reset();
+            intakeAfterReverse = true;
+        } else if (intakeAfterReverse && IntakeTimer.milliseconds() > intakeTime) {
+            State = intakeState.off;
+            intakeAfterReverse = false;
         }
 
     }
 
+    public void Reverse(boolean Reverse, double ReverseTime, double IntakeTime){
+        this.intakeTime = IntakeTime;
+        this.reverse = Reverse;
+        this.reverseTime = ReverseTime;
 
-
-
+    }
 }
-
