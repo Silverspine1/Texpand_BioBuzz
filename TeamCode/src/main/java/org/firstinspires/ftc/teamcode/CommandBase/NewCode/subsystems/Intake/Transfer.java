@@ -31,7 +31,7 @@ public class Transfer extends SubSystem {
     public void execute() {
 
         if (transfer) {
-            IntakeHardware.State = intakeHardware.intakeState.transfering;
+            IntakeHardware.State = intakeHardware.intakeState.transferring;
             Transfer = transferState.open;
 
         } else if (!transfer) {
@@ -52,7 +52,7 @@ public class Transfer extends SubSystem {
         if (TransferTimer.milliseconds() > transferTime && transfer) {
 
             TransferTimer.reset();
-            IntakeHardware.State = intakeHardware.intakeState.transfering;
+            IntakeHardware.State = intakeHardware.intakeState.transferring;
 
         } else if (transfer && TransferTimer.milliseconds() > transferTime) {
 

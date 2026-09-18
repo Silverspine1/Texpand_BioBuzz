@@ -26,7 +26,7 @@ public class intakeHardware extends SubSystem {
         off,
         intaking,
         ejecting,
-        transfering,
+        transferring,
         holding
 
     }
@@ -61,7 +61,7 @@ public class intakeHardware extends SubSystem {
             case ejecting:
                 currentPower = -1;
                 break;
-            case transfering:
+            case transferring:
                 currentPower = -1;
                 break;
 

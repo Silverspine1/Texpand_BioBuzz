@@ -1,26 +1,36 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.State;
 
-public class RobotState {
-    public enum IntaceDirState{
-        ITAKING,
-        EGECTING
+import org.firstinspires.ftc.robotcore.external.State;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware;
+
+import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
+
+public class RobotState extends SubSystem {
+
+    intakeHardware IntakeHardware;
+    public enum IntakeDirState{
+        INTAKING,
+        EJECTING
 
     }
-    public enum IntakeAutoOrManuale{
-        MANUALE,
+
+    IntakeDirState intakeDirState;
+
+    public enum IntakeAutoOrManual{
+        MANUAL,
         AUTO
     }
 
-    public enum FliweelState{
+    public enum FlywheelState{
         ON_SPEED,
         SPEEDING_UP,
         IDLE
 
     }
 
-    public enum FolowingPath{
-        FOLOWING,
-        NOT_FOLWOING,
+    public enum FollowingPath{
+        FOLLOWING,
+        NOT_FOLLOWING,
 
     }
     public enum Braking{
@@ -28,17 +38,29 @@ public class RobotState {
         NOT_BRAKING,
 
     }
-    public enum ActiveLocolisashon{
+    public enum ActiveLocalisation{
         PINPOINT,
-        THREE_WEEL,
+        THREE_WHEEL,
 
     }
 
-    public double TargetTuretDir;
-    public double TargetHoodAagnle;
-    public double TargetFliweelSpeed;
+    public double TargetTurretDir;
+    public double TargetHoodAngle;
+    public double TargetFlywheelSpeed;
 
+    @Override
+    public void init()  {
 
+    }
 
+    @Override
+    public void execute() {
+        if (IntakeHardware.State == intakeHardware.intakeState.intaking) {
+            intakeDirState = IntakeDirState.INTAKING;
+
+        } else if (IntakeHardware.State == intakeHardware.intakeState.ejecting) {
+                intakeDirState = IntakeDirState.EJECTING;
+        }
+    }
 
 }
