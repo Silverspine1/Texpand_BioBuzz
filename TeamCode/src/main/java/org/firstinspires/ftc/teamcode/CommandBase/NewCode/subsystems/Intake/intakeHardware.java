@@ -7,6 +7,7 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Drivebase.DriveBase;
+import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
 
 import dev.weaponboy.nexus_command_base.Commands.Command;
 import dev.weaponboy.nexus_command_base.Hardware.MotorEx;
@@ -16,18 +17,23 @@ import dev.weaponboy.nexus_pathing.PathingUtility.RobotPower;
 public class intakeHardware extends SubSystem {
 
     MotorEx IMotor = new MotorEx();
+    public intakeHardware(OpModeEX opModeEX) {
+        registerSubsystem(opModeEX, returnDefaultCommand());
+    }
 
-    enum intakeState {
+
+    public enum intakeState {
         off,
         intaking,
         ejecting,
-        transfering
+        transfering,
+        holding
 
     }
 
     ElapsedTime ReverseTimer = new ElapsedTime();
     ElapsedTime IntakeTimer = new ElapsedTime();
-    intakeState State = intakeState.off;
+    public intakeState State = intakeState.off;
     boolean intakeAfterReverse = false;
     boolean reverse;
     double reverseTime;
@@ -42,30 +48,27 @@ public class intakeHardware extends SubSystem {
 
     @Override
     public void execute() {
-
         //controls the motor relative to the state which will be set by a different loop
-        if(State == intakeState.off) {
+        switch (State){
+            case off:
+                currentPower = 0;
 
-            currentPower = 0;
+                break;
+            case intaking:
+                currentPower = 1;
 
-        } else if (State == intakeState.intaking) {
+                break;
+            case ejecting:
+                currentPower = -1;
+                break;
+            case transfering:
+                currentPower = -1;
+                break;
 
-            currentPower = 1;
-            //add vision imput to stop once ball has been intaked and begins to transfer
-
-        } else if (State == intakeState.ejecting){
-
-            currentPower = -1;
-            //add vision imput to stop once ball has been ejected and switches to off
-
-        } else if (State == intakeState.transfering){
-            //depends souly on the mec
-
-        } else {
-            State = intakeState.off;
         }
 
         IMotor.update(currentPower);
+
         if (ReverseTimer.milliseconds() > reverseTime && reverse) {
             
             ReverseTimer.reset();
