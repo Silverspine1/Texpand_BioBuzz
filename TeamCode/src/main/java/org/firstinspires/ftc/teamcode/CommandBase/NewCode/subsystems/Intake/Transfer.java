@@ -18,7 +18,7 @@ public class Transfer extends SubSystem {
     transferState Transfer = transferState.closed;
     ServoDegrees blocker = new ServoDegrees();
     boolean transfer = false;
-    double tranferTime = 500;
+    double transferTime = 500;
     ElapsedTime TransferTimer = new ElapsedTime();
 
     @Override
@@ -49,21 +49,21 @@ public class Transfer extends SubSystem {
 
 
         }
-        if (TransferTimer.milliseconds() > tranferTime && transfer) {
+        if (TransferTimer.milliseconds() > transferTime && transfer) {
 
             TransferTimer.reset();
             IntakeHardware.State = intakeHardware.intakeState.transfering;
 
-        } else if (transfer && TransferTimer.milliseconds() > tranferTime) {
+        } else if (transfer && TransferTimer.milliseconds() > transferTime) {
 
             IntakeHardware.State = intakeHardware.intakeState.off;
             transfer = false;
         }
 
     }
-    public void Tranfer(boolean transfer, double tranferTime){
+    public void Transfer(boolean transfer, double transferTime){
         this.transfer = transfer;
-        this.tranferTime = tranferTime;
+        this.transferTime = transferTime;
 
     }
 }
