@@ -55,12 +55,7 @@ public class RobotState extends SubSystem {
 
     @Override
     public void execute() {
-        if (IntakeHardware.State == intakeHardware.intakeState.intaking) {
-            intakeDirState = IntakeDirState.INTAKING;
 
-        } else if (IntakeHardware.State == intakeHardware.intakeState.ejecting) {
-                intakeDirState = IntakeDirState.EJECTING;
-        }
     }
 
 }

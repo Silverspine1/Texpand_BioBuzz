@@ -2,6 +2,8 @@ package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake;
 
 import com.qualcomm.robotcore.util.ElapsedTime;
 
+import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
+
 import dev.weaponboy.nexus_command_base.Hardware.ServoDegrees;
 import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 
@@ -17,9 +19,12 @@ public class Transfer extends SubSystem {
     intakeHardware IntakeHardware;
     transferState Transfer = transferState.closed;
     ServoDegrees blocker = new ServoDegrees();
-    boolean transfer = false;
+    public boolean transfer = false;
     double transferTime = 500;
     ElapsedTime TransferTimer = new ElapsedTime();
+    public Transfer(OpModeEX opModeEX) {
+        registerSubsystem(opModeEX, returnDefaultCommand());
+    }
 
     @Override
     public void init() {

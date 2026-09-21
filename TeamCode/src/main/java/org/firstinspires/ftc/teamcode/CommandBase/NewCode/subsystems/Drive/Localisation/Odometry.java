@@ -62,6 +62,18 @@ public class Odometry extends SubSystem {
     double XVelocity = 0;
     double YVelocity = 0;
     double HVelocity = 0;
+
+    // Pinpoint acceleration and heading velocity
+    // X/Y acceleration: cm/s²
+    // Heading acceleration: rad/s²
+    // Heading velocity: rad/s
+    double XAcceleration = 0;
+    double YAcceleration = 0;
+    double HAcceleration = 0;
+    double HeadingVelocity = 0;
+
+    private long lastPinpointVelocitySampleNanos = 0;
+
     boolean resetAtStart = false;
 
 
@@ -76,8 +88,8 @@ public class Odometry extends SubSystem {
     public double otherHeading;
 
     double lastRightPod, lastLeftPod, lastBackPod;
-    public double currentRightPod, currentLeftPod, currentBackPod;
-    public double rightPodPos, leftPodPos, backPodPos;
+    double currentRightPod, currentLeftPod, currentBackPod;
+    double rightPodPos, leftPodPos, backPodPos;
 
     double podTicks = 2000;
     double wheelRadius = 2.4;
@@ -243,6 +255,24 @@ public class Odometry extends SubSystem {
         return HVelocity;
     }
 
+    // Pinpoint acceleration getters
+
+    public double getXAcceleration() {
+        return XAcceleration;
+    }
+
+    public double getYAcceleration() {
+        return YAcceleration;
+    }
+
+    public double getHAcceleration() {
+        return HAcceleration;
+    }
+
+    public double getHeadingVelocity() {
+        return HeadingVelocity;
+    }
+
     public LambdaCommand update = new LambdaCommand(
             () -> {
             },
@@ -250,9 +280,35 @@ public class Odometry extends SubSystem {
 
                 odo.update();
 
+                // Store previous velocities for Pinpoint acceleration calculation
+                double previousXVelocity = XVelocity;
+                double previousYVelocity = YVelocity;
+                double previousHVelocity = HVelocity;
+
                 XVelocity = -odo.getVelX(DistanceUnit.CM);
                 YVelocity = odo.getVelY(DistanceUnit.CM);
                 HVelocity = odo.getHeadingVelocity(UnnormalizedAngleUnit.RADIANS);
+
+                // Pinpoint-only acceleration and heading velocity
+                if (tipeOfOdo == TipeOfOdo.PintPoint) {
+
+                    long currentTimeNanos = System.nanoTime();
+
+                    HeadingVelocity = HVelocity;
+
+                    if (lastPinpointVelocitySampleNanos != 0) {
+
+                        double deltaTime = (currentTimeNanos - lastPinpointVelocitySampleNanos) / 1_000_000_000.0;
+
+                        if (deltaTime > 0) {
+                            XAcceleration = (XVelocity - previousXVelocity) / deltaTime;
+                            YAcceleration = (YVelocity - previousYVelocity) / deltaTime;
+                            HAcceleration = (HVelocity - previousHVelocity) / deltaTime;
+                        }
+                    }
+
+                    lastPinpointVelocitySampleNanos = currentTimeNanos;
+                }
 
                 // Cache heading reads (avoids redundant unit conversions)
                 double rawDeg = odo.getHeading(AngleUnit.DEGREES);

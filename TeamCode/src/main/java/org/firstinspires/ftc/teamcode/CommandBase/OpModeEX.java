@@ -5,8 +5,10 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.Gamepad;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Drivebase.DriveBase;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.Transfer;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware;
-import org.firstinspires.ftc.teamcode.CommandBase.old_referance.DriveBase;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Localisation.Odometry;
 
 import dev.weaponboy.nexus_command_base.OpmodeEX.Scheduler;
@@ -18,10 +20,16 @@ public abstract class OpModeEX extends OpMode {
     public intakeHardware IntakeHardware = new intakeHardware(this);
 
     public Odometry odometry = new Odometry(this);
+    public Transfer transfer = new Transfer(this);
+    public ShooterController shooterController = new ShooterController(this);
+    public DriveBase driveBase = new DriveBase(this);
+
+
+
 
 
     private final Scheduler scheduler = new Scheduler(this,
-            new SubSystem[] {odometry});
+            new SubSystem[] {odometry,transfer,IntakeHardware,shooterController,driveBase});
 
     List<LynxModule> allHubs;
 

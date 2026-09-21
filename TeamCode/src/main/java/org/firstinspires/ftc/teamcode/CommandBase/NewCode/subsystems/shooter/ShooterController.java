@@ -1,10 +1,12 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter;
 
 import static org.firstinspires.ftc.robotcore.external.BlocksOpModeCompanion.hardwareMap;
-import static org.firstinspires.ftc.robotcore.internal.camera.libuvc.nativeobject.UvcDeviceInfo.Fields.config;
 
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.Servo;
+
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Localisation.Odometry;
+import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
 
 import dev.weaponboy.nexus_command_base.Hardware.MotorEx;
 import dev.weaponboy.nexus_command_base.Hardware.ServoDegrees;
@@ -16,6 +18,7 @@ public class ShooterController extends SubSystem {
 
     Shotplanner shotPlanner = new Shotplanner(new Shotplanner.Config());
     private AxonEncoder encoder;
+    Odometry odometry;
 
 
 
@@ -37,6 +40,9 @@ public class ShooterController extends SubSystem {
     public boolean targeting = false;
 
     public PIDController shootPID = new PIDController(0.3, 0.000, 0.01);
+    public ShooterController(OpModeEX opModeEX) {
+        registerSubsystem(opModeEX, returnDefaultCommand());
+    }
 
 
 
@@ -67,21 +73,22 @@ public class ShooterController extends SubSystem {
     public void execute() {
 
 
+
         Shotplanner.RobotState robot = new Shotplanner.RobotState(
-                robotX,
-                robotY,
+                odometry.X()/100,
+                odometry.Y()/100,
 
-                velocityX,
-                velocityY,
+                odometry.getXVelocity()/100,
+                odometry.getYVelocity()/100,
 
-                accelerationX,
-                accelerationY,
+                odometry.getXAcceleration()/100,
+                odometry.getYAcceleration(),
 
-                robotHeadingDeg,
-                robotAngularVelocityDegPerSec,
-                robotAngularAccelerationDegPerSec2,
+                odometry.Heading(),
+                odometry.getHeadingVelocity(),
+                odometry.getHAcceleration(),
 
-                turretAngularVelocityDegPerSec
+                encoder.getVelocity()
         );
 
         Shotplanner.HiveTarget hive =
@@ -102,6 +109,7 @@ public class ShooterController extends SubSystem {
             }
         }else {
             shooterMotor.update(0);
+            turretController.stop();
         }
 
 
