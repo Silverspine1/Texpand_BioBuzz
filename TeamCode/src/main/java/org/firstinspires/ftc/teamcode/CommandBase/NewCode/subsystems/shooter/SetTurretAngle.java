@@ -7,21 +7,23 @@ public class SetTurretAngle {
     private static final double PROFILE_EPSILON = 0.000001;
     private static final double MAX_DT = 0.05;
 
-    private final Servo servo;
+    private final Servo tServ;
+    private final Servo tServ1;
+
     private final AxonEncoder encoder;
 
-    private double minPosition = -240;
-    private double maxPosition = 240;
+    private double minPosition = -140;
+    private double maxPosition = 140;
 
-    private double maxVelocity;
-    private double maxAcceleration;
+    private double maxVelocity = 180;
+    private double maxAcceleration = 1000;
 
-    private double kP = 0;
-    private double kVelocityFeedback = 0;
+    private double kP = 0.004;
+    private double kVelocityFeedback = 0.0;
 
-    private double kS = 0;
-    private double kV = 0;
-    private double kA = 0;
+    private double kS = 0.0;
+    private double kV = 0.0020;
+    private double kA = 0.0;
 
     private double neutralPosition = 0.5;
     private double maxCorrection = 0.5;
@@ -62,11 +64,12 @@ public class SetTurretAngle {
 
     public SetTurretAngle(
             Servo servo,
-            AxonEncoder encoder,
+            Servo turretServo2, AxonEncoder encoder,
             double maxVelocity,
             double maxAcceleration
     ) {
-        this.servo = servo;
+        this.tServ = servo;
+        this.tServ1 = servo;
         this.encoder = encoder;
 
         setConstraints(maxVelocity, maxAcceleration);
@@ -112,7 +115,7 @@ public class SetTurretAngle {
 
         long now = System.nanoTime();
 
-        Position = encoder.getPosition();
+        Position = encoder.getTurretAngle();
         Velocity = encoder.getVelocity();
 
         if (targetNeedsResolution) {
@@ -369,7 +372,9 @@ public class SetTurretAngle {
                         1
                 );
 
-        servo.setPosition(servoCommand);
+        tServ.setPosition(servoCommand);
+        tServ1.setPosition(servoCommand);
+
     }
 
 
@@ -406,7 +411,9 @@ public class SetTurretAngle {
 
         insideToleranceSinceNanos = 0;
 
-        servo.setPosition(neutralPosition);
+        tServ.setPosition(neutralPosition);
+        tServ1.setPosition(neutralPosition);
+
     }
 
 
@@ -475,7 +482,6 @@ public class SetTurretAngle {
                 + Math.signum(difference)
                 * maximumChange;
     }
-
 
     private double clamp(
             double value,

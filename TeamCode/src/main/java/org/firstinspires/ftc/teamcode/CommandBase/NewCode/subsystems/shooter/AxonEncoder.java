@@ -13,7 +13,7 @@ public class AxonEncoder {
     double previousAngle = 0;
     double totalPosition = 0;
     boolean updateTurretPosition = true;
-    double gearRatio = 1;
+    double gearRatio = 2.34;
     double degreesPerSecond = 0;
     ElapsedTime veloTimer = new ElapsedTime();
 
@@ -27,6 +27,7 @@ public class AxonEncoder {
 
     public void init(HardwareMap hardwareMap, String deviceName){
         encoder = hardwareMap.get(AnalogInput.class, deviceName);
+        previousAngle = encoder.getVoltage() / 3.3 * 360;
     }
 
 
@@ -51,10 +52,10 @@ public class AxonEncoder {
         totalPosition = 0;
     }
     public double getTurretAngle(){
-        return totalPosition * gearRatio;
+        return totalPosition / gearRatio;
     }
     public double getVelocity() {
-        return degreesPerSecond;
+        return degreesPerSecond / gearRatio;
     }
 
 
