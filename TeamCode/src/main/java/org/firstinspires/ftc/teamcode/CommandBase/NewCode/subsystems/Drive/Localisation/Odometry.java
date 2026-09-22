@@ -140,7 +140,7 @@ public class Odometry extends SubSystem {
                 Register.Y_VELOCITY,
                 Register.H_VELOCITY);
 
-        odo.setOffsets(-13, 132, DistanceUnit.MM);
+        odo.setOffsets(120, -15, DistanceUnit.MM);
         odo.setEncoderResolution(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
         odo.setEncoderDirections(GoBildaPinpointDriver.EncoderDirection.REVERSED,
                 GoBildaPinpointDriver.EncoderDirection.FORWARD);
@@ -148,9 +148,9 @@ public class Odometry extends SubSystem {
 
 
         // int three well
-        leftPod.initMotor("leftPod", getOpMode().hardwareMap);
-        rightPod.initMotor("rightPod", getOpMode().hardwareMap);
-        backPod.initMotor("backPod", getOpMode().hardwareMap);
+        leftPod.initMotor("LF", getOpMode().hardwareMap);
+        rightPod.initMotor("RF", getOpMode().hardwareMap);
+        backPod.initMotor("RB", getOpMode().hardwareMap);
     }
 
     public double headingError(double targetHeading) {

@@ -43,6 +43,7 @@ public class intakeHardware extends SubSystem {
 
     @Override
     public void init() {
+
         IMotor.initMotor("IMotor", getOpMode().hardwareMap);
     }
 
