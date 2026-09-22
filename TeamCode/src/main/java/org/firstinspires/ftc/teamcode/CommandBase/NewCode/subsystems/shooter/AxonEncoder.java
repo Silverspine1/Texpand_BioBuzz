@@ -52,10 +52,10 @@ public class AxonEncoder {
         totalPosition = 0;
     }
     public double getTurretAngle(){
-        return totalPosition / gearRatio;
+        return -totalPosition / gearRatio;
     }
     public double getVelocity() {
-        return degreesPerSecond / gearRatio;
+        return -((degreesPerSecond+0.000001) / gearRatio);
     }
 
 

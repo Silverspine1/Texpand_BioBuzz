@@ -26,7 +26,7 @@ public class SetTurretAngle {
     private double kA = 0.0;
 
     private double neutralPosition = 0.5;
-    private double maxCorrection = 0.5;
+    private double maxCorrection = 0.4;
 
     private double requestedAngle;
     private double targetPosition;
@@ -61,6 +61,9 @@ public class SetTurretAngle {
     private boolean targetNeedsResolution = false;
     private boolean useExtraRange = false;
 
+    // Last known-good servo command, used as a fallback if a NaN ever appears.
+    private double lastSafeServoCommand = 0.5;
+
 
     public SetTurretAngle(
             Servo servo,
@@ -69,7 +72,7 @@ public class SetTurretAngle {
             double maxAcceleration
     ) {
         this.tServ = servo;
-        this.tServ1 = servo;
+        this.tServ1 = servo; // NOTE: this ignores turretServo2 — see note at bottom
         this.encoder = encoder;
 
         setConstraints(maxVelocity, maxAcceleration);
@@ -81,6 +84,12 @@ public class SetTurretAngle {
             double tolerance,
             boolean useExtraRange
     ) {
+        if (Double.isNaN(angle) || Double.isInfinite(angle)) {
+            throw new IllegalArgumentException(
+                    "setTarget() received a non-finite angle: " + angle
+            );
+        }
+
         requestedAngle = angle;
         positionTolerance = Math.abs(tolerance);
 
@@ -115,8 +124,25 @@ public class SetTurretAngle {
 
         long now = System.nanoTime();
 
-        Position = encoder.getTurretAngle();
-        Velocity = encoder.getVelocity();
+        double rawPosition = encoder.getTurretAngle();
+        double rawVelocity = encoder.getVelocity();
+
+        // --- Guard 1: encoder producing NaN/Infinity ---
+        if (Double.isNaN(rawPosition) || Double.isInfinite(rawPosition)
+                || Double.isNaN(rawVelocity) || Double.isInfinite(rawVelocity)) {
+            // Don't touch the servos with garbage data — hold last safe command
+            // and skip this cycle. Throwing here (instead of silently holding)
+            // makes the root cause obvious in Logcat/DS instead of a mystery NaN
+            // deep in the servo call. Comment out the throw if you'd rather
+            // just hold position silently once you've diagnosed it.
+            throw new IllegalStateException(
+                    "AxonEncoder returned non-finite value: position="
+                            + rawPosition + " velocity=" + rawVelocity
+            );
+        }
+
+        Position = rawPosition;
+        Velocity = rawVelocity;
 
         if (targetNeedsResolution) {
             targetPosition = resolveTarget(
@@ -372,9 +398,17 @@ public class SetTurretAngle {
                         1
                 );
 
+        // --- Guard 2: final safety net before touching hardware ---
+        if (Double.isNaN(servoCommand) || Double.isInfinite(servoCommand)) {
+            // Fall back to last known-good command instead of sending NaN,
+            // which is what the Servo/SDK throws on.
+            servoCommand = lastSafeServoCommand;
+        } else {
+            lastSafeServoCommand = servoCommand;
+        }
+
         tServ.setPosition(servoCommand);
         tServ1.setPosition(servoCommand);
-
     }
 
 
@@ -413,11 +447,7 @@ public class SetTurretAngle {
 
         tServ.setPosition(neutralPosition);
         tServ1.setPosition(neutralPosition);
-
     }
-
-
-
 
 
     public void setConstraints(
@@ -427,8 +457,6 @@ public class SetTurretAngle {
         this.maxVelocity = Math.abs(maxVelocity);
         this.maxAcceleration = Math.abs(maxAcceleration);
     }
-
-
 
 
     public boolean atTarget() {

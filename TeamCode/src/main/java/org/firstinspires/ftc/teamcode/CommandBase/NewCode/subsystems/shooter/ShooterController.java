@@ -18,7 +18,7 @@ import dev.weaponboy.nexus_pathing.PathingUtility.PIDController;
 public class ShooterController extends SubSystem {
 
     Shotplanner shotPlanner = new Shotplanner(new Shotplanner.Config());
-    private AxonEncoder encoder;
+    public AxonEncoder encoder;
     Odometry OdoMetry;
 
     Shotplanner.BlueHiveSide blueHiveSide = Shotplanner.BlueHiveSide.AUDIENCE;
@@ -29,7 +29,7 @@ public class ShooterController extends SubSystem {
 
     public MotorEx shooterMotor = new MotorEx();
     double targetRPM = 0;
-    double RPM;
+    public double RPM;
     public boolean targeting = false;
 
     public PIDController shootPID = new PIDController(0.3, 0.000, 0.01);
@@ -69,6 +69,7 @@ public class ShooterController extends SubSystem {
     @Override
     public void execute() {
         long start = System.nanoTime();
+        encoder.UpdatePosition();
 
         RPM = ((shooterMotor.getVelocity() / 33.6) * 60);
 
@@ -103,10 +104,11 @@ public class ShooterController extends SubSystem {
                     );
 
             shooterMotor.update(Math.max(0, shootPID.calculate(shot.flywheelRPM, RPM)));
-            if (shot.reachable){
+            if (shot.reachable) {
                 turretController.setTarget(shot.turretAngleDeg, 1.0, false);
                 setHoodDegrees(shot.launchAngleDeg);
             }
+
         }else {
             shooterMotor.update(0);
             turretController.stop();
