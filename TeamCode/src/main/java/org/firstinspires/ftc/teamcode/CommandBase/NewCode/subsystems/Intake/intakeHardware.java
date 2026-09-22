@@ -39,7 +39,7 @@ public class intakeHardware extends SubSystem {
     double reverseTime;
     double intakeTime;
 
-    double currentPower = IMotor.getPower();
+    double currentPower = 0;
 
     @Override
     public void init() {

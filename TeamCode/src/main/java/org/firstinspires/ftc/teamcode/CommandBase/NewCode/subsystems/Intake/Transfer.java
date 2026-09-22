@@ -27,6 +27,7 @@ public class Transfer extends SubSystem {
     ElapsedTime TransferTimer = new ElapsedTime();
     public Transfer(OpModeEX opModeEX) {
         registerSubsystem(opModeEX, returnDefaultCommand());
+        IntakeHardware = opModeEX.IntakeHardware;
     }
 
     @Override
