@@ -138,11 +138,11 @@ public class Shotplanner {
     private static final double DT = 0.01;
     private static final double MAX_FLIGHT_TIME = 2.0;
     private static final double MIN_MUZZLE_SPEED = 0.5;
-    private static final double COARSE_ANGLE_STEP = 2.0;
-    private static final double FINE_ANGLE_STEP = 0.25;
+    private static final double COARSE_ANGLE_STEP = 4.0;
+    private static final double FINE_ANGLE_STEP = 0.5;
     private static final double FINE_ANGLE_RANGE = 2.0;
-    private static final int SPEED_SEARCH_ITERATIONS = 16;
-    private static final int YAW_CORRECTION_ITERATIONS = 6;
+    private static final int SPEED_SEARCH_ITERATIONS = 10;
+    private static final int YAW_CORRECTION_ITERATIONS = 3;
     private static final int CLEARANCE_SUBSTEPS = 5;
 
     Config config;
@@ -322,6 +322,8 @@ public class Shotplanner {
                 muzzleSpeed * Math.sin(elevation)
         ).add(muzzle.platformVelocity);
 
+        // position/velocity are mutated in place for the rest of this call; both were
+        // freshly allocated above (muzzle.position, velocity via .add()), so no aliasing risk.
         Vec3 position = muzzle.position;
         Vec3 spinAxis = new Vec3(Math.sin(yaw), -Math.cos(yaw), 0);
         Vec3 outwardNormal = outwardNormal(target);
@@ -332,13 +334,30 @@ public class Shotplanner {
         TrajectoryResult result = new TrajectoryResult();
         result.minimumClearance = Double.POSITIVE_INFINITY;
 
-        while (time < MAX_FLIGHT_TIME) {
-            Vec3 acceleration = acceleration(velocity, spinAxis);
-            Vec3 midVelocity = velocity.add(acceleration.multiply(DT / 2.0));
-            Vec3 midAcceleration = acceleration(midVelocity, spinAxis);
+        // Reused scratch vectors: avoids allocating ~10 Vec3 per integration step.
+        Vec3 acceleration = new Vec3(0, 0, 0);
+        Vec3 midVelocity = new Vec3(0, 0, 0);
+        Vec3 midAcceleration = new Vec3(0, 0, 0);
+        Vec3 nextPosition = new Vec3(0, 0, 0);
+        Vec3 nextVelocity = new Vec3(0, 0, 0);
 
-            Vec3 nextPosition = position.add(midVelocity.multiply(DT));
-            Vec3 nextVelocity = velocity.add(midAcceleration.multiply(DT));
+        while (time < MAX_FLIGHT_TIME) {
+            acceleration(velocity, spinAxis, acceleration);
+
+            midVelocity.x = velocity.x + acceleration.x * (DT / 2.0);
+            midVelocity.y = velocity.y + acceleration.y * (DT / 2.0);
+            midVelocity.z = velocity.z + acceleration.z * (DT / 2.0);
+
+            acceleration(midVelocity, spinAxis, midAcceleration);
+
+            nextPosition.x = position.x + midVelocity.x * DT;
+            nextPosition.y = position.y + midVelocity.y * DT;
+            nextPosition.z = position.z + midVelocity.z * DT;
+
+            nextVelocity.x = velocity.x + midAcceleration.x * DT;
+            nextVelocity.y = velocity.y + midAcceleration.y * DT;
+            nextVelocity.z = velocity.z + midAcceleration.z * DT;
+
             double nextPlaneDistance = planeDistance(nextPosition, target, outwardNormal);
 
             if (!result.crossedOpening
@@ -370,8 +389,14 @@ public class Shotplanner {
 
             if (nextPosition.z < 0) return result;
 
-            position = nextPosition;
-            velocity = nextVelocity;
+            position.x = nextPosition.x;
+            position.y = nextPosition.y;
+            position.z = nextPosition.z;
+
+            velocity.x = nextVelocity.x;
+            velocity.y = nextVelocity.y;
+            velocity.z = nextVelocity.z;
+
             previousPlaneDistance = nextPlaneDistance;
             time += DT;
         }
@@ -379,10 +404,18 @@ public class Shotplanner {
         return result;
     }
 
-    private Vec3 acceleration(Vec3 velocity, Vec3 spinAxis) {
+    /** Writes spinAxis × velocity * (magnusK * |velocity|) + gravity into {@code out}. */
+    private void acceleration(Vec3 velocity, Vec3 spinAxis, Vec3 out) {
         double speed = velocity.magnitude();
-        Vec3 magnus = spinAxis.cross(velocity).multiply(config.magnusK * speed);
-        return new Vec3(magnus.x, magnus.y, magnus.z - GRAVITY);
+        double k = config.magnusK * speed;
+
+        double cx = spinAxis.y * velocity.z - spinAxis.z * velocity.y;
+        double cy = spinAxis.z * velocity.x - spinAxis.x * velocity.z;
+        double cz = spinAxis.x * velocity.y - spinAxis.y * velocity.x;
+
+        out.x = cx * k;
+        out.y = cy * k;
+        out.z = cz * k - GRAVITY;
     }
 
     private void sampleClearance(Vec3 start, Vec3 end,

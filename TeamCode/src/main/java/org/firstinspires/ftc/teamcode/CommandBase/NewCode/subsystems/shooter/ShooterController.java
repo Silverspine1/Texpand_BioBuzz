@@ -6,6 +6,7 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.Servo;
 
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Localisation.Odometry;
+import org.firstinspires.ftc.teamcode.CommandBase.LoopProfiler;
 import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
 
 import dev.weaponboy.nexus_command_base.Hardware.MotorEx;
@@ -67,35 +68,40 @@ public class ShooterController extends SubSystem {
 
     @Override
     public void execute() {
+        long start = System.nanoTime();
 
-        Shotplanner.RobotState robot = new Shotplanner.RobotState(
-                OdoMetry.X()/100,
-                OdoMetry.Y()/100,
-
-                OdoMetry.getXVelocity()/100,
-                OdoMetry.getYVelocity()/100,
-
-                OdoMetry.getXAcceleration()/100,
-                OdoMetry.getYAcceleration(),
-
-                OdoMetry.Heading(),
-                OdoMetry.getHeadingVelocity(),
-                OdoMetry.getHAcceleration(),
-
-                encoder.getVelocity()
-        );
-
-        Shotplanner.HiveTarget hive =
-                Shotplanner.getBlueHiveTarget(blueHiveSide);
-
-        Shotplanner.ShotSolution shot =
-                shotPlanner.calculateShot(
-                        robot,
-                        hive,
-                        0.100
-                );
         RPM = ((shooterMotor.getVelocity() / 33.6) * 60);
+
         if (targeting) {
+            // The full shot solve is expensive (nested angle/speed/yaw search over many
+            // trajectory simulations) — only run it while actually targeting.
+            Shotplanner.RobotState robot = new Shotplanner.RobotState(
+                    OdoMetry.X()/100,
+                    OdoMetry.Y()/100,
+
+                    OdoMetry.getXVelocity()/100,
+                    OdoMetry.getYVelocity()/100,
+
+                    OdoMetry.getXAcceleration()/100,
+                    OdoMetry.getYAcceleration(),
+
+                    OdoMetry.Heading(),
+                    OdoMetry.getHeadingVelocity(),
+                    OdoMetry.getHAcceleration(),
+
+                    encoder.getVelocity()
+            );
+
+            Shotplanner.HiveTarget hive =
+                    Shotplanner.getBlueHiveTarget(blueHiveSide);
+
+            Shotplanner.ShotSolution shot =
+                    shotPlanner.calculateShot(
+                            robot,
+                            hive,
+                            0.100
+                    );
+
             shooterMotor.update(Math.max(0, shootPID.calculate(shot.flywheelRPM, RPM)));
             if (shot.reachable){
                 turretController.setTarget(shot.turretAngleDeg, 1.0, false);
@@ -107,5 +113,7 @@ public class ShooterController extends SubSystem {
         }
 
         turretController.update();
+
+        ((OpModeEX) getOpMode()).profiler.recordDuration(LoopProfiler.TURRET, System.nanoTime() - start);
     }
 }
