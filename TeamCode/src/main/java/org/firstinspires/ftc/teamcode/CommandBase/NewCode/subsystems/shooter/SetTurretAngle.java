@@ -61,8 +61,8 @@ public class SetTurretAngle {
     private boolean targetNeedsResolution = false;
     private boolean useExtraRange = false;
 
-    // Last known-good servo command, used as a fallback if a NaN ever appears.
     private double lastSafeServoCommand = 0.5;
+    private double retargetThreshold = 0.5;
 
 
     public SetTurretAngle(
@@ -72,7 +72,7 @@ public class SetTurretAngle {
             double maxAcceleration
     ) {
         this.tServ = servo;
-        this.tServ1 = servo; // NOTE: this ignores turretServo2 — see note at bottom
+        this.tServ1 = turretServo2;
         this.encoder = encoder;
 
         setConstraints(maxVelocity, maxAcceleration);
@@ -85,10 +85,12 @@ public class SetTurretAngle {
             boolean useExtraRange
     ) {
         if (Double.isNaN(angle) || Double.isInfinite(angle)) {
-            throw new IllegalArgumentException(
-                    "setTarget() received a non-finite angle: " + angle
-            );
+            return;
         }
+
+        boolean targetMoved = !active
+                || Math.abs(normalizeAngle(angle - requestedAngle)) > retargetThreshold
+                || useExtraRange != this.useExtraRange;
 
         requestedAngle = angle;
         positionTolerance = Math.abs(tolerance);
@@ -96,8 +98,10 @@ public class SetTurretAngle {
         this.useExtraRange = useExtraRange;
         targetNeedsResolution = true;
 
-        atTarget = false;
-        insideToleranceSinceNanos = 0;
+        if (targetMoved) {
+            atTarget = false;
+            insideToleranceSinceNanos = 0;
+        }
 
         if (!active) {
             active = true;
@@ -120,25 +124,16 @@ public class SetTurretAngle {
             return;
         }
 
-        encoder.UpdatePosition();
-
         long now = System.nanoTime();
 
         double rawPosition = encoder.getTurretAngle();
         double rawVelocity = encoder.getVelocity();
 
-        // --- Guard 1: encoder producing NaN/Infinity ---
         if (Double.isNaN(rawPosition) || Double.isInfinite(rawPosition)
                 || Double.isNaN(rawVelocity) || Double.isInfinite(rawVelocity)) {
-            // Don't touch the servos with garbage data — hold last safe command
-            // and skip this cycle. Throwing here (instead of silently holding)
-            // makes the root cause obvious in Logcat/DS instead of a mystery NaN
-            // deep in the servo call. Comment out the throw if you'd rather
-            // just hold position silently once you've diagnosed it.
-            throw new IllegalStateException(
-                    "AxonEncoder returned non-finite value: position="
-                            + rawPosition + " velocity=" + rawVelocity
-            );
+            tServ.setPosition(neutralPosition);
+            tServ1.setPosition(neutralPosition);
+            return;
         }
 
         Position = rawPosition;
@@ -197,9 +192,7 @@ public class SetTurretAngle {
                 );
 
         if (minimumTurn > maximumTurn) {
-            throw new IllegalArgumentException(
-                    "Requested angle cannot be reached inside turret limits"
-            );
+            return clamp(baseAngle, minPosition, maxPosition);
         }
 
         double bestTarget = baseAngle;
@@ -398,10 +391,7 @@ public class SetTurretAngle {
                         1
                 );
 
-        // --- Guard 2: final safety net before touching hardware ---
         if (Double.isNaN(servoCommand) || Double.isInfinite(servoCommand)) {
-            // Fall back to last known-good command instead of sending NaN,
-            // which is what the Servo/SDK throws on.
             servoCommand = lastSafeServoCommand;
         } else {
             lastSafeServoCommand = servoCommand;
@@ -491,6 +481,23 @@ public class SetTurretAngle {
 
     public double getPositionError() {
         return positionError;
+    }
+
+
+    public double getServoCommand() {
+        return servoCommand;
+    }
+
+    public double getOutput() {
+        return output;
+    }
+
+    public double getProfilePosition() {
+        return profilePosition;
+    }
+
+    public double getProfileVelocity() {
+        return profileVelocity;
     }
 
 
