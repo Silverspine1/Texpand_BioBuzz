@@ -69,6 +69,9 @@ public class SetTurretAngle {
     // Feedback compares against where the profile was this long ago, so normal lag isn't treated as error.
     private double latencyCompensation = 0;
 
+    private double[] ffSpeed;
+    private double[] ffPower;
+
     private static final int HISTORY_SIZE = 64;
     private final long[] historyTime = new long[HISTORY_SIZE];
     private final double[] historyPosition = new double[HISTORY_SIZE];
@@ -83,11 +86,6 @@ public class SetTurretAngle {
     private static final double TRACKING_TIMEOUT = 0.25;
     private double targetRate = 0;
     private long lastRequestNanos = 0;
-
-    // Builds up when the turret has stopped outside tolerance, to push through the servo deadband.
-    private static final double STUCK_BOOST_RATE = 0.1;
-    private double stuckBoost = 0;
-    private double stuckBoostSign = 0;
 
 
     public SetTurretAngle(
@@ -141,7 +139,6 @@ public class SetTurretAngle {
         targetNeedsResolution = true;
 
         if (targetMoved) {
-            stuckBoost = 0;
             atTarget = false;
             insideToleranceSinceNanos = 0;
         }
@@ -200,7 +197,7 @@ public class SetTurretAngle {
         if (needsProfileInitialization) {
             initializeProfile(now);
             recordProfile(now);
-            calculateControl(now, 0);
+            calculateControl(now);
             updateAtTarget(now);
             return;
         }
@@ -219,7 +216,7 @@ public class SetTurretAngle {
 
         updateProfile(dt);
         recordProfile(now);
-        calculateControl(now, dt);
+        calculateControl(now);
         updateAtTarget(now);
     }
 
@@ -359,12 +356,14 @@ public class SetTurretAngle {
             direction = -Math.signum(profileVelocity);
         }
 
+        // Fastest speed that can still stop at the target, measured from where this step will end
+        // (not where it starts) so a whole loop of travel can't carry the profile past the target.
+        double oldVelocity = profileVelocity;
+        double a = maxAcceleration;
+        double distanceAfterStep =
+                Math.abs(distanceRemaining) - Math.max(0, oldVelocity * direction) * dt / 2.0;
         double stoppingVelocity =
-                Math.sqrt(
-                        2.0
-                                * maxAcceleration
-                                * Math.abs(distanceRemaining)
-                );
+                Math.max(0, (-a * dt + Math.sqrt(a * a * dt * dt + 8.0 * a * Math.max(0, distanceAfterStep))) / 2.0);
 
         double requestedVelocity =
                 direction
@@ -372,8 +371,6 @@ public class SetTurretAngle {
                         maxVelocity,
                         stoppingVelocity
                 );
-
-        double oldVelocity = profileVelocity;
 
         profileVelocity =
                 moveTowards(
@@ -411,8 +408,7 @@ public class SetTurretAngle {
                         * maxAcceleration
                         * dt;
 
-        if (movingSlowly
-                && (crossedTarget || closeToTarget)) {
+        if (crossedTarget || (movingSlowly && closeToTarget)) {
 
             profilePosition = targetPosition;
             profileVelocity = 0;
@@ -427,7 +423,7 @@ public class SetTurretAngle {
     }
 
 
-    private void calculateControl(long now, double dt) {
+    private void calculateControl(long now) {
         lookUpDelayedProfile(now - (long) (latencyCompensation * 1e9));
 
         positionError =
@@ -451,19 +447,17 @@ public class SetTurretAngle {
             movementDirection = 0;
         }
 
-        if (!profileFinished
-                || Math.abs(positionError) <= positionTolerance
-                || Math.signum(positionError) != stuckBoostSign) {
-            stuckBoost = 0;
-            stuckBoostSign = Math.signum(positionError);
-        } else if (Math.abs(Velocity) < velocityTolerance) {
-            stuckBoost = Math.min(maxCorrection, stuckBoost + STUCK_BOOST_RATE * dt);
-        }
 
-        feedforward =
-                (kS + stuckBoost) * movementDirection
-                        + kV * profileVelocity
-                        + kA * profileAcceleration;
+        if (ffSpeed != null && Math.abs(profileVelocity) > PROFILE_EPSILON) {
+            feedforward =
+                    Math.signum(profileVelocity) * tablePower(Math.abs(profileVelocity))
+                            + kA * profileAcceleration;
+        } else {
+            feedforward =
+                    kS * movementDirection
+                            + kV * profileVelocity
+                            + kA * profileAcceleration;
+        }
 
         feedback =
                 kP * positionError
@@ -530,7 +524,6 @@ public class SetTurretAngle {
 
     public void stop() {
         active = false;
-        stuckBoost = 0;
         targetRate = 0;
         lastRequestNanos = 0;
         atTarget = false;
@@ -571,6 +564,28 @@ public class SetTurretAngle {
 
     public void setLatencyCompensation(double seconds) {
         latencyCompensation = Math.max(0, Math.min(0.5, seconds));
+    }
+
+
+    /** Measured speed -> power curve used for feedforward instead of kS + kV * speed. Null to disable. */
+    public void setFeedforwardTable(double[] speed, double[] power) {
+        if (TurretTune.isValidTable(speed, power) && speed != null) {
+            ffSpeed = speed.clone();
+            ffPower = power.clone();
+        } else {
+            ffSpeed = null;
+            ffPower = null;
+        }
+    }
+
+
+    private double tablePower(double speed) {
+        int last = ffSpeed.length - 1;
+        int i = 1;
+        while (i < last && speed > ffSpeed[i]) i++;
+        double span = ffSpeed[i] - ffSpeed[i - 1];
+        double f = (speed - ffSpeed[i - 1]) / span;
+        return ffPower[i - 1] + f * (ffPower[i] - ffPower[i - 1]);
     }
 
 

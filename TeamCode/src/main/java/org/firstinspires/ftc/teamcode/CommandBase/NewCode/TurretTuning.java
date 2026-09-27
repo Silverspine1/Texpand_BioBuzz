@@ -25,6 +25,10 @@ public class TurretTuning {
     /** Auto-tune keeps the turret within +/- this many degrees of where it was at INIT. */
     public static double safeRangeDeg = 110.0;
 
+    // Private so Dashboard doesn't try to edit it; carried through so saving keeps the measured curve.
+    private static double[] ffSpeed;
+    private static double[] ffPower;
+
     public static void copyFrom(TurretTune t) {
         kS = t.kS;
         kV = t.kV;
@@ -35,6 +39,8 @@ public class TurretTuning {
         maxVelocity = t.maxVelocity;
         maxAcceleration = t.maxAcceleration;
         latency = t.latency;
+        ffSpeed = t.ffSpeed == null ? null : t.ffSpeed.clone();
+        ffPower = t.ffPower == null ? null : t.ffPower.clone();
     }
 
     public static TurretTune toTune() {
@@ -48,6 +54,8 @@ public class TurretTuning {
         t.maxVelocity = maxVelocity;
         t.maxAcceleration = maxAcceleration;
         t.latency = latency;
+        t.ffSpeed = ffSpeed == null ? null : ffSpeed.clone();
+        t.ffPower = ffPower == null ? null : ffPower.clone();
         return t;
     }
 }
