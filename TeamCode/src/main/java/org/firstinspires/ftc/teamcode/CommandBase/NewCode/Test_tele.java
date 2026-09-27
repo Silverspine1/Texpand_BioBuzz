@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode;
 
+import com.acmerobotics.dashboard.FtcDashboard;
+import com.acmerobotics.dashboard.telemetry.TelemetryPacket;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
@@ -9,6 +11,7 @@ import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.Set
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.ServoSelect;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.TurretDebugMode;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.Shotplanner;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.TurretTune;
 import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
 @TeleOp
 public class Test_tele extends OpModeEX {
@@ -23,13 +26,32 @@ public class Test_tele extends OpModeEX {
     private String encoderVelVerdict = "-";
     private String voltageVerdict = "-";
 
+    private boolean pingPong = false;
+    private boolean pingPongPositive = true;
+    private final ElapsedTime pingPongTimer = new ElapsedTime();
+
+    private final ElapsedTime moveTimer = new ElapsedTime();
+    private boolean moveInProgress = false;
+    private double moveStartAngle = 0;
+    private double moveTarget = 0;
+    private double moveOvershoot = 0;
+    private double lastSettleTime = 0;
+    private double lastOvershoot = 0;
+    private double kVEstimate = 0;
+
+    private String tuneStatus = "defaults (no saved tune)";
+
     private final ElapsedTime headingWindow = new ElapsedTime();
     private double windowStartHeading = 0;
     private String headingVerdict = "rotate the robot left (CCW)";
 
     @Override
     public void initEX() {
-
+        TurretTune saved = TurretTune.load();
+        if (saved != null) {
+            TurretTuning.copyFrom(saved);
+            tuneStatus = "loaded saved tune";
+        }
     }
 
     @Override
@@ -49,10 +71,23 @@ public class Test_tele extends OpModeEX {
             shooterController.targeting = false;
         }
 
-        turretDebugControls();
-
         AxonEncoder encoder = shooterController.encoder;
         SetTurretAngle turret = shooterController.getTurretController();
+
+        turret.setGains(
+                TurretTuning.kS,
+                TurretTuning.kV,
+                TurretTuning.kA,
+                TurretTuning.kP,
+                TurretTuning.kVelocityFeedback,
+                TurretTuning.maxCorrection
+        );
+        turret.setConstraints(TurretTuning.maxVelocity, TurretTuning.maxAcceleration);
+        turret.setLatencyCompensation(TurretTuning.latency);
+
+        turretDebugControls();
+        trackMove(encoder, turret);
+        sendDashboardGraph(encoder, turret);
 
         checkTurretDirection(encoder);
         checkHeadingDirection();
@@ -85,8 +120,14 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("ctrl error (deg)", "%.2f", turret.getPositionError());
         telemetry.addData("ctrl output", flagNaN(turret.getOutput()));
         telemetry.addData("ctrl servo cmd", flagNaN(turret.getServoCommand()));
+        telemetry.addData("tune (L-stick btn saves)", tuneStatus);
+        telemetry.addData("ping-pong (A)", pingPong);
+        telemetry.addData("last move settle (s)", "%.2f", lastSettleTime);
+        telemetry.addData("last move overshoot (deg)", "%.2f", lastOvershoot);
+        telemetry.addData("kV estimate (manual)", "%.5f", kVEstimate);
 
         telemetry.addLine("=== SHOT PLANNER ===");
+        telemetry.addData("goal side (BACK)", shooterController.blueHiveSide);
         telemetry.addData("targeting", shooterController.targeting);
         telemetry.addData("flywheel RPM", "%.0f", shooterController.RPM);
         Shotplanner.ShotSolution shot = shooterController.lastShot;
@@ -98,7 +139,7 @@ public class Test_tele extends OpModeEX {
             telemetry.addData("clearance (m)", "%.3f", shot.minimumClearanceMeters);
             telemetry.addData("planner time (ms)", "%.1f", shooterController.plannerMs);
 
-            Shotplanner.HiveTarget hive = Shotplanner.getBlueHiveTarget(Shotplanner.BlueHiveSide.AUDIENCE);
+            Shotplanner.HiveTarget hive = Shotplanner.getBlueHiveTarget(shooterController.blueHiveSide);
             double bearing = Math.toDegrees(Math.atan2(hive.openingY - odometry.Y() / 100, hive.openingX - odometry.X() / 100));
             telemetry.addData("geometric bearing (deg)", "%.1f", normalize(bearing - odometry.Heading()));
         }
@@ -126,22 +167,98 @@ public class Test_tele extends OpModeEX {
                     options[(shooterController.manualServoSelect.ordinal() + 1) % options.length];
         }
 
+        if (!lastGamepad1.back && currentGamepad1.back) {
+            shooterController.blueHiveSide =
+                    shooterController.blueHiveSide == Shotplanner.BlueHiveSide.AUDIENCE
+                            ? Shotplanner.BlueHiveSide.OPPOSITE
+                            : Shotplanner.BlueHiveSide.AUDIENCE;
+        }
+
+        if (!lastGamepad1.left_stick_button && currentGamepad1.left_stick_button) {
+            TurretTune tune = TurretTuning.toTune();
+            if (!tune.isValid()) {
+                tuneStatus = "NOT SAVED: values invalid";
+            } else {
+                try {
+                    tune.save();
+                    tuneStatus = "saved";
+                } catch (Exception e) {
+                    tuneStatus = "SAVE FAILED: " + e.getMessage();
+                }
+            }
+        }
+
         if (!lastGamepad1.b && currentGamepad1.b) {
             shooterController.encoder.resetTurretAngle();
         }
 
         if (!lastGamepad1.dpad_left && currentGamepad1.dpad_left) {
-            shooterController.testTurretTo(45);
+            pingPong = false;
+            startMove(TurretTuning.testAngle);
         }
         if (!lastGamepad1.dpad_right && currentGamepad1.dpad_right) {
-            shooterController.testTurretTo(-45);
+            pingPong = false;
+            startMove(-TurretTuning.testAngle);
         }
         if (!lastGamepad1.dpad_down && currentGamepad1.dpad_down) {
-            shooterController.testTurretTo(0);
+            pingPong = false;
+            startMove(0);
+        }
+
+        if (!lastGamepad1.a && currentGamepad1.a) {
+            pingPong = !pingPong;
+            pingPongTimer.reset();
+            if (pingPong) {
+                pingPongPositive = true;
+                startMove(TurretTuning.testAngle);
+            }
+        }
+        if (pingPong && shooterController.turretDebugMode == TurretDebugMode.CLOSED_LOOP
+                && pingPongTimer.seconds() >= TurretTuning.pingPongSeconds) {
+            pingPongTimer.reset();
+            pingPongPositive = !pingPongPositive;
+            startMove(pingPongPositive ? TurretTuning.testAngle : -TurretTuning.testAngle);
         }
 
         double stick = gamepad1.right_stick_x;
-        shooterController.manualTurretPower = Math.abs(stick) > 0.05 ? stick * 0.3 : 0;
+        shooterController.manualTurretPower = Math.abs(stick) > 0.05 ? stick * TurretTuning.manualMaxPower : 0;
+    }
+
+    private void startMove(double angle) {
+        moveStartAngle = shooterController.encoder.getTurretAngle();
+        moveTarget = angle;
+        moveOvershoot = 0;
+        moveInProgress = true;
+        moveTimer.reset();
+        shooterController.testTurretTo(angle);
+    }
+
+    private void trackMove(AxonEncoder encoder, SetTurretAngle turret) {
+        if (!moveInProgress) {
+            return;
+        }
+
+        double direction = Math.signum(moveTarget - moveStartAngle);
+        double past = (encoder.getTurretAngle() - moveTarget) * direction;
+        moveOvershoot = Math.max(moveOvershoot, past);
+
+        if (turret.atTarget()) {
+            lastSettleTime = moveTimer.seconds();
+            lastOvershoot = moveOvershoot;
+            moveInProgress = false;
+        }
+    }
+
+    private void sendDashboardGraph(AxonEncoder encoder, SetTurretAngle turret) {
+        TelemetryPacket packet = new TelemetryPacket();
+        packet.put("target", turret.getTargetPosition());
+        packet.put("profilePos", turret.getProfilePosition());
+        packet.put("actualPos", encoder.getTurretAngle());
+        packet.put("profileVel", turret.getProfileVelocity());
+        packet.put("actualVel", encoder.getVelocity());
+        packet.put("output", turret.getOutput());
+        packet.put("error", turret.getPositionError());
+        FtcDashboard.getInstance().sendTelemetryPacket(packet);
     }
 
     private void checkTurretDirection(AxonEncoder encoder) {
@@ -170,7 +287,8 @@ public class Test_tele extends OpModeEX {
             }
 
             double power = shooterController.manualTurretPower;
-            if (shooterController.turretDebugMode == TurretDebugMode.MANUAL &&Math.abs(power) > 0.05) {
+            if (shooterController.turretDebugMode == TurretDebugMode.MANUAL && Math.abs(power) > 0.05) {
+                kVEstimate = power / measuredTurretVel;
                 turretDirectionVerdict = Math.signum(power) == Math.signum(dAngle)
                         ? "OK: + power -> angle UP (" + shooterController.manualServoSelect + ")"
                         : "REVERSED: + power -> angle DOWN (" + shooterController.manualServoSelect + ")";

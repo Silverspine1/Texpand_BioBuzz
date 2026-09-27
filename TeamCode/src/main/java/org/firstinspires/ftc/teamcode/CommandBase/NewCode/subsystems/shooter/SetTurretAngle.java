@@ -64,6 +64,31 @@ public class SetTurretAngle {
     private double lastSafeServoCommand = 0.5;
     private double retargetThreshold = 0.5;
 
+    private boolean usingSavedTune = false;
+
+    // Feedback compares against where the profile was this long ago, so normal lag isn't treated as error.
+    private double latencyCompensation = 0;
+
+    private static final int HISTORY_SIZE = 64;
+    private final long[] historyTime = new long[HISTORY_SIZE];
+    private final double[] historyPosition = new double[HISTORY_SIZE];
+    private final double[] historyVelocity = new double[HISTORY_SIZE];
+    private int historyHead = 0;
+    private int historyCount = 0;
+    private double delayedProfilePosition;
+    private double delayedProfileVelocity;
+
+    // A continuously moving target is led by targetRate * latencyCompensation so tracking doesn't lag.
+    private static final double TRACKING_JUMP = 10.0;
+    private static final double TRACKING_TIMEOUT = 0.25;
+    private double targetRate = 0;
+    private long lastRequestNanos = 0;
+
+    // Builds up when the turret has stopped outside tolerance, to push through the servo deadband.
+    private static final double STUCK_BOOST_RATE = 0.1;
+    private double stuckBoost = 0;
+    private double stuckBoostSign = 0;
+
 
     public SetTurretAngle(
             Servo servo,
@@ -76,6 +101,12 @@ public class SetTurretAngle {
         this.encoder = encoder;
 
         setConstraints(maxVelocity, maxAcceleration);
+
+        TurretTune saved = TurretTune.load();
+        if (saved != null) {
+            saved.applyTo(this);
+            usingSavedTune = true;
+        }
     }
 
 
@@ -92,6 +123,17 @@ public class SetTurretAngle {
                 || Math.abs(normalizeAngle(angle - requestedAngle)) > retargetThreshold
                 || useExtraRange != this.useExtraRange;
 
+        long now = nowNanos();
+        double sinceLast = (now - lastRequestNanos) / 1e9;
+        double change = normalizeAngle(angle - requestedAngle);
+        if (active && lastRequestNanos != 0 && sinceLast > 0
+                && sinceLast < TRACKING_TIMEOUT && Math.abs(change) < TRACKING_JUMP) {
+            targetRate += 0.3 * (change / sinceLast - targetRate);
+        } else if (lastRequestNanos == 0 || sinceLast > 0) {
+            targetRate = 0;
+        }
+        lastRequestNanos = now;
+
         requestedAngle = angle;
         positionTolerance = Math.abs(tolerance);
 
@@ -99,6 +141,7 @@ public class SetTurretAngle {
         targetNeedsResolution = true;
 
         if (targetMoved) {
+            stuckBoost = 0;
             atTarget = false;
             insideToleranceSinceNanos = 0;
         }
@@ -124,7 +167,7 @@ public class SetTurretAngle {
             return;
         }
 
-        long now = System.nanoTime();
+        long now = nowNanos();
 
         double rawPosition = encoder.getTurretAngle();
         double rawVelocity = encoder.getVelocity();
@@ -139,9 +182,14 @@ public class SetTurretAngle {
         Position = rawPosition;
         Velocity = rawVelocity;
 
+        if (targetRate != 0 && (now - lastRequestNanos) / 1e9 > TRACKING_TIMEOUT) {
+            targetRate = 0;
+            targetNeedsResolution = true;
+        }
+
         if (targetNeedsResolution) {
             targetPosition = resolveTarget(
-                    requestedAngle,
+                    requestedAngle + targetRate * latencyCompensation,
                     Position,
                     useExtraRange
             );
@@ -151,7 +199,8 @@ public class SetTurretAngle {
 
         if (needsProfileInitialization) {
             initializeProfile(now);
-            calculateControl();
+            recordProfile(now);
+            calculateControl(now, 0);
             updateAtTarget(now);
             return;
         }
@@ -169,7 +218,8 @@ public class SetTurretAngle {
         dt = Math.min(dt, MAX_DT);
 
         updateProfile(dt);
-        calculateControl();
+        recordProfile(now);
+        calculateControl(now, dt);
         updateAtTarget(now);
     }
 
@@ -240,7 +290,41 @@ public class SetTurretAngle {
     }
 
 
+    private void recordProfile(long now) {
+        historyHead = (historyHead + 1) % HISTORY_SIZE;
+        historyTime[historyHead] = now;
+        historyPosition[historyHead] = profilePosition;
+        historyVelocity[historyHead] = profileVelocity;
+        historyCount = Math.min(historyCount + 1, HISTORY_SIZE);
+    }
+
+
+    private void lookUpDelayedProfile(long time) {
+        delayedProfilePosition = profilePosition;
+        delayedProfileVelocity = profileVelocity;
+        if (latencyCompensation <= 0 || historyCount == 0) {
+            return;
+        }
+
+        int newer = historyHead;
+        for (int i = 1; i < historyCount; i++) {
+            int older = (historyHead - i + HISTORY_SIZE) % HISTORY_SIZE;
+            if (historyTime[older] <= time) {
+                long span = historyTime[newer] - historyTime[older];
+                double f = span > 0 ? (double) (time - historyTime[older]) / span : 0;
+                delayedProfilePosition = historyPosition[older] + f * (historyPosition[newer] - historyPosition[older]);
+                delayedProfileVelocity = historyVelocity[older] + f * (historyVelocity[newer] - historyVelocity[older]);
+                return;
+            }
+            newer = older;
+        }
+        delayedProfilePosition = historyPosition[newer];
+        delayedProfileVelocity = historyVelocity[newer];
+    }
+
+
     private void initializeProfile(long now) {
+        historyCount = 0;
         profilePosition = Position;
         profileVelocity = Velocity;
         profileAcceleration = 0;
@@ -343,25 +427,41 @@ public class SetTurretAngle {
     }
 
 
-    private void calculateControl() {
+    private void calculateControl(long now, double dt) {
+        lookUpDelayedProfile(now - (long) (latencyCompensation * 1e9));
+
         positionError =
-                profilePosition - Position;
+                delayedProfilePosition - Position;
 
         velocityError =
-                profileVelocity - Velocity;
+                delayedProfileVelocity - Velocity;
 
         double movementDirection;
 
         if (Math.abs(profileVelocity) > PROFILE_EPSILON) {
             movementDirection =
                     Math.signum(profileVelocity);
-        } else {
+        } else if (Math.abs(profileAcceleration) > PROFILE_EPSILON) {
             movementDirection =
                     Math.signum(profileAcceleration);
+        } else if (Math.abs(positionError) > positionTolerance) {
+            movementDirection =
+                    Math.signum(positionError);
+        } else {
+            movementDirection = 0;
+        }
+
+        if (!profileFinished
+                || Math.abs(positionError) <= positionTolerance
+                || Math.signum(positionError) != stuckBoostSign) {
+            stuckBoost = 0;
+            stuckBoostSign = Math.signum(positionError);
+        } else if (Math.abs(Velocity) < velocityTolerance) {
+            stuckBoost = Math.min(maxCorrection, stuckBoost + STUCK_BOOST_RATE * dt);
         }
 
         feedforward =
-                kS * movementDirection
+                (kS + stuckBoost) * movementDirection
                         + kV * profileVelocity
                         + kA * profileAcceleration;
 
@@ -430,6 +530,9 @@ public class SetTurretAngle {
 
     public void stop() {
         active = false;
+        stuckBoost = 0;
+        targetRate = 0;
+        lastRequestNanos = 0;
         atTarget = false;
         profileFinished = false;
 
@@ -446,6 +549,38 @@ public class SetTurretAngle {
     ) {
         this.maxVelocity = Math.abs(maxVelocity);
         this.maxAcceleration = Math.abs(maxAcceleration);
+    }
+
+
+    public void setGains(
+            double kS,
+            double kV,
+            double kA,
+            double kP,
+            double kVelocityFeedback,
+            double maxCorrection
+    ) {
+        this.kS = kS;
+        this.kV = kV;
+        this.kA = kA;
+        this.kP = kP;
+        this.kVelocityFeedback = kVelocityFeedback;
+        this.maxCorrection = Math.abs(maxCorrection);
+    }
+
+
+    public void setLatencyCompensation(double seconds) {
+        latencyCompensation = Math.max(0, Math.min(0.5, seconds));
+    }
+
+
+    public boolean isUsingSavedTune() {
+        return usingSavedTune;
+    }
+
+
+    protected long nowNanos() {
+        return System.nanoTime();
     }
 
 

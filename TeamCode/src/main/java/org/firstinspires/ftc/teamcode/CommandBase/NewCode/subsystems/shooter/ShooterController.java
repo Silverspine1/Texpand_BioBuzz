@@ -26,7 +26,7 @@ public class ShooterController extends SubSystem {
     public AxonEncoder encoder;
     Odometry OdoMetry;
 
-    Shotplanner.BlueHiveSide blueHiveSide = Shotplanner.BlueHiveSide.AUDIENCE;
+    public Shotplanner.BlueHiveSide blueHiveSide = Shotplanner.BlueHiveSide.AUDIENCE;
     ServoDegrees Hood = new ServoDegrees();
     Servo turretServo1;
     Servo turretServo2;
