@@ -144,6 +144,31 @@ public class Odometry extends SubSystem {
         return HeadingVelocity;
     }
 
+    /** Heading rate in deg/s, same direction convention as Heading(). */
+    public double getHeadingVelocityDeg() {
+        return -Math.toDegrees(HeadingVelocity);
+    }
+
+    /** Heading acceleration in deg/s^2, same direction convention as Heading(). */
+    public double getHeadingAccelerationDeg() {
+        return -Math.toDegrees(HAcceleration);
+    }
+
+    /** Sets the current pose (field cm, and heading in the same convention as Heading()). */
+    public void setPose(double xCm, double yCm, double headingDeg) {
+        double rawTarget = normalizeDegrees(360 - headingDeg);
+        double rawNow = odo.getHeading(AngleUnit.DEGREES);
+
+        startX = xCm + odo.getPosX(DistanceUnit.CM);
+        startY = yCm - odo.getPosY(DistanceUnit.CM);
+        startHeading = rawTarget - rawNow;
+
+        X = xCm;
+        Y = yCm;
+        Heading = rawTarget;
+        normilised = normalizeRadians(Math.toRadians(rawTarget));
+    }
+
     // Normalize a degree value into [0, 360)
     private double normalizeDegrees(double deg) {
         deg %= 360.0;

@@ -6,7 +6,8 @@ public class Shotplanner {
 
     public static class Config {
         public double pollenDiameterMeters = 0.072;
-        public double flywheelRadiusMeters = 0.072;
+        public double flywheelRadiusMeters = 0.036;
+        public double muzzleEfficiency = 1.0;
 
         public double turretAxisForwardMeters = 0.1;
         public double turretAxisLeftMeters = 0.0;
@@ -18,13 +19,35 @@ public class Shotplanner {
         public double maxLaunchAngleDeg = 80.0;
         public double maxFlywheelRPM = 6000.0;
 
-        public double magnusK = 0.0195;
+        public double magnusK = 0.0065;
         public double requiredClearanceMeters = 0.025;
 
         public double cellWidthMeters = 0.508;
         public double cellVerticalSideHeightMeters = 0.1933;
         public double cellTotalHeightMeters = 0.3556;
         public double entryCheckDepthMeters = 0.10;
+
+        public Config copy() {
+            Config c = new Config();
+            c.pollenDiameterMeters = pollenDiameterMeters;
+            c.flywheelRadiusMeters = flywheelRadiusMeters;
+            c.muzzleEfficiency = muzzleEfficiency;
+            c.turretAxisForwardMeters = turretAxisForwardMeters;
+            c.turretAxisLeftMeters = turretAxisLeftMeters;
+            c.muzzleForwardFromTurretMeters = muzzleForwardFromTurretMeters;
+            c.muzzleLeftFromTurretMeters = muzzleLeftFromTurretMeters;
+            c.muzzleHeightMeters = muzzleHeightMeters;
+            c.minLaunchAngleDeg = minLaunchAngleDeg;
+            c.maxLaunchAngleDeg = maxLaunchAngleDeg;
+            c.maxFlywheelRPM = maxFlywheelRPM;
+            c.magnusK = magnusK;
+            c.requiredClearanceMeters = requiredClearanceMeters;
+            c.cellWidthMeters = cellWidthMeters;
+            c.cellVerticalSideHeightMeters = cellVerticalSideHeightMeters;
+            c.cellTotalHeightMeters = cellTotalHeightMeters;
+            c.entryCheckDepthMeters = entryCheckDepthMeters;
+            return c;
+        }
     }
 
 
@@ -126,6 +149,7 @@ public class Shotplanner {
         public double muzzleSpeedMetersPerSecond;
         public double flightTimeSeconds;
         public double minimumClearanceMeters;
+        public String failureReason = "";
     }
 
     public static class ShotEvaluation {
@@ -152,6 +176,10 @@ public class Shotplanner {
         validateConfig();
     }
 
+    public Config getConfig() {
+        return config;
+    }
+
     public ShotSolution calculateShot(RobotState currentState,
                                       HiveTarget target,
                                       double mechanicalDelaySeconds) {
@@ -166,6 +194,7 @@ public class Shotplanner {
 
         if (best == null) {
             result.minimumClearanceMeters = Double.NEGATIVE_INFINITY;
+            result.failureReason = explainFailure(releaseState, target);
             return result;
         }
 
@@ -208,6 +237,44 @@ public class Shotplanner {
         result.safe = trajectory.enteredCorridor
                 && trajectory.minimumClearance >= config.requiredClearanceMeters;
         return result;
+    }
+
+    /** Plain-language reason no shot was found (straight-line physics, ignores spin). */
+    public String explainFailure(RobotState robot, HiveTarget target) {
+        MuzzleState muzzle = getMuzzleState(robot, initialYaw(robot, target));
+        Vec3 normal = outwardNormal(target);
+
+        double behind = -planeDistance(muzzle.position, target, normal);
+        if (behind > 0) {
+            return String.format("wrong side of the opening: muzzle is %.2f m behind it (opening faces %.0f deg)",
+                    behind, target.facingAngleDeg);
+        }
+
+        double distance = Math.hypot(target.openingX - muzzle.position.x, target.openingY - muzzle.position.y);
+        double targetHeight = target.openingBottomZ + preferredAimHeight();
+        double rise = targetHeight - config.muzzleHeightMeters;
+        double neededAngle = Math.toDegrees(Math.atan2(rise, distance));
+
+        if (neededAngle > config.maxLaunchAngleDeg) {
+            return String.format("too close: %.2f m away needs a launch of at least %.0f deg, hood tops out at %.0f deg (%.0f from vertical)",
+                    distance, neededAngle, config.maxLaunchAngleDeg, 90 - config.maxLaunchAngleDeg);
+        }
+
+        double maxSpeed = getMaxMuzzleSpeed();
+        double bestHeight = Double.NEGATIVE_INFINITY;
+        for (double angle = config.minLaunchAngleDeg; angle <= config.maxLaunchAngleDeg + 1e-6; angle += 1.0) {
+            double a = Math.toRadians(angle);
+            double height = config.muzzleHeightMeters + distance * Math.tan(a)
+                    - GRAVITY * distance * distance / (2.0 * maxSpeed * maxSpeed * Math.cos(a) * Math.cos(a));
+            bestHeight = Math.max(bestHeight, height);
+        }
+        if (bestHeight < targetHeight) {
+            return String.format("too far: %.2f m away, even at %.0f rpm the ball arrives %.2f m too low",
+                    distance, config.maxFlywheelRPM, targetHeight - bestHeight);
+        }
+
+        return String.format("no clean entry: %.2f m away, no clear lane through the opening at launch angles %.0f-%.0f deg",
+                distance, config.minLaunchAngleDeg, config.maxLaunchAngleDeg);
     }
 
     private Candidate findBestCandidate(RobotState robot, HiveTarget target) {
@@ -622,11 +689,11 @@ public class Shotplanner {
     }
 
     private double muzzleSpeedToRPM(double muzzleSpeed) {
-        return 60.0 * muzzleSpeed / (Math.PI * config.flywheelRadiusMeters);
+        return 60.0 * muzzleSpeed / (Math.PI * config.flywheelRadiusMeters * config.muzzleEfficiency);
     }
 
     private double rpmToMuzzleSpeed(double rpm) {
-        return Math.PI * config.flywheelRadiusMeters * rpm / 60.0;
+        return Math.PI * config.flywheelRadiusMeters * config.muzzleEfficiency * rpm / 60.0;
     }
 
     private double getMaxMuzzleSpeed() {

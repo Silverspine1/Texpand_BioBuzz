@@ -7,6 +7,9 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 public class AxonEncoder {
 
+    // Flip this one sign to reverse the turret angle AND velocity together (+ = counter-clockwise from above).
+    public static final double TURRET_DIRECTION = -1;
+
     AnalogInput encoder;
     double maxVoltage = 3.3;
     double difference = 0;
@@ -61,11 +64,18 @@ public class AxonEncoder {
     public void resetTurretAngle(){
         totalPosition = 0;
     }
-    public double getTurretAngle(){
-        return -totalPosition / gearRatio;
+    private double toTurretDegrees(double servoDegrees) {
+        return TURRET_DIRECTION * servoDegrees / gearRatio;
     }
+
+    /** Turret angle in degrees. */
+    public double getTurretAngle(){
+        return toTurretDegrees(totalPosition);
+    }
+
+    /** Turret velocity in degrees per second (the turret itself, not the servo). */
     public double getVelocity() {
-        return -degreesPerSecond / gearRatio;
+        return toTurretDegrees(degreesPerSecond);
     }
 
     public double getVoltage() {

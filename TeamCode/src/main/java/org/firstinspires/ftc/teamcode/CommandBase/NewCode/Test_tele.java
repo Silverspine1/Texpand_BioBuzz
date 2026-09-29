@@ -21,9 +21,16 @@ public class Test_tele extends OpModeEX {
     private final ElapsedTime turretWindow = new ElapsedTime();
     private double windowStartAngle = 0;
     private double windowStartVoltage = 0;
-    private double measuredTurretVel = 0;
     private String turretDirectionVerdict = "move the turret (MANUAL, stick right)";
-    private String encoderVelVerdict = "-";
+    private String encoderVelVerdict = "spin or move the turret";
+    private final ElapsedTime velClock = new ElapsedTime();
+    private final ElapsedTime velWindow = new ElapsedTime();
+    private double lastVelAngle = Double.NaN;
+    private int velAgree = 0;
+    private int velTotal = 0;
+
+    private final TargetingDebugView fieldView = new TargetingDebugView();
+    private final ElapsedTime packetTimer = new ElapsedTime();
     private String voltageVerdict = "-";
 
     private boolean pingPong = false;
@@ -40,6 +47,7 @@ public class Test_tele extends OpModeEX {
     private double kVEstimate = 0;
 
     private String tuneStatus = "defaults (no saved tune)";
+    private String poseStatus = "";
 
     private final ElapsedTime headingWindow = new ElapsedTime();
     private double windowStartHeading = 0;
@@ -52,6 +60,7 @@ public class Test_tele extends OpModeEX {
             TurretTuning.copyFrom(saved);
             tuneStatus = "loaded saved tune";
         }
+        odometry.setPose(ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg);
     }
 
     @Override
@@ -65,10 +74,12 @@ public class Test_tele extends OpModeEX {
         if (!lastGamepad1.left_bumper && currentGamepad1.left_bumper){
             transfer.Trans(true,500);
         }
-        if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up && !shooterController.targeting){
-            shooterController.targeting = true;
-        } else if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up && shooterController.targeting) {
-            shooterController.targeting = false;
+        if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up) {
+            shooterController.targeting = !shooterController.targeting;
+            if (shooterController.targeting) {
+                pingPong = false;
+                shooterController.turretDebugMode = TurretDebugMode.OFF;
+            }
         }
 
         AxonEncoder encoder = shooterController.encoder;
@@ -90,24 +101,26 @@ public class Test_tele extends OpModeEX {
         sendDashboardGraph(encoder, turret);
 
         checkTurretDirection(encoder);
+        checkVelocityAgreement(encoder);
         checkHeadingDirection();
 
         telemetry.addLine("=== ODOMETRY ===");
         telemetry.addData("X / Y (cm)", "%.1f / %.1f", odometry.X(), odometry.Y());
         telemetry.addData("H (deg)", "%.1f", odometry.Heading());
         telemetry.addData("XVel / YVel (cm/s)", "%.1f / %.1f", odometry.getXVelocity(), odometry.getYVelocity());
-        telemetry.addData("HVel (rad/s!)", "%.3f  = %.1f deg/s", odometry.getHeadingVelocity(), Math.toDegrees(odometry.getHeadingVelocity()));
+        telemetry.addData("heading vel (deg/s)", "%.1f", odometry.getHeadingVelocityDeg());
         telemetry.addData("Heading dir check", headingVerdict);
+        telemetry.addData("pose (R-stick btn sets)", "%.0f, %.0f cm @ %.0f deg  %s",
+                ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg, poseStatus);
 
         telemetry.addLine("=== TURRET ENCODER ===");
         telemetry.addData("voltage (V)", "%.3f", encoder.getVoltage());
         telemetry.addData("raw servo deg", "%.1f", encoder.getRawDegrees());
         telemetry.addData("total servo deg", "%.1f", encoder.getTotalPosition());
         telemetry.addData("turret angle (deg)", "%.2f", encoder.getTurretAngle());
-        telemetry.addData("encoder.getVelocity()", flagNaN(encoder.getVelocity()));
-        telemetry.addData("measured turret vel (deg/s)", "%.1f", measuredTurretVel);
+        telemetry.addData("turret velocity (deg/s)", flagNaN(encoder.getVelocity()));
+        telemetry.addData("velocity vs angle change", encoderVelVerdict);
         telemetry.addData("voltage vs angle", voltageVerdict);
-        telemetry.addData("encoder vel sign", encoderVelVerdict);
 
         telemetry.addLine("=== TURRET SERVOS ===");
         telemetry.addData("debug mode", shooterController.turretDebugMode);
@@ -120,7 +133,7 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("ctrl error (deg)", "%.2f", turret.getPositionError());
         telemetry.addData("ctrl output", flagNaN(turret.getOutput()));
         telemetry.addData("ctrl servo cmd", flagNaN(turret.getServoCommand()));
-        telemetry.addData("tune (L-stick btn saves)", tuneStatus);
+        telemetry.addData("tune (L-stick btn saves both)", tuneStatus);
         telemetry.addData("ping-pong (A)", pingPong);
         telemetry.addData("last move settle (s)", "%.2f", lastSettleTime);
         telemetry.addData("last move overshoot (deg)", "%.2f", lastOvershoot);
@@ -128,13 +141,21 @@ public class Test_tele extends OpModeEX {
 
         telemetry.addLine("=== SHOT PLANNER ===");
         telemetry.addData("goal side (BACK)", shooterController.blueHiveSide);
-        telemetry.addData("targeting", shooterController.targeting);
-        telemetry.addData("flywheel RPM", "%.0f", shooterController.RPM);
+        telemetry.addData("targeting (dpad up)", shooterController.targeting);
+        telemetry.addData("flywheel RPM / target", "%.0f / %.0f  power %.2f  %s", shooterController.RPM,
+                shooterController.getTargetRPM(), shooterController.flywheelPower,
+                shooterController.flywheelReady() ? "READY" : "");
+        if (shooterController.flywheelReady() && shooterController.flywheelPower > 0.05) {
+            telemetry.addData("kF if steady", "%.6f", shooterController.flywheelPower / shooterController.getTargetRPM());
+        }
         Shotplanner.ShotSolution shot = shooterController.lastShot;
         if (shot != null) {
             telemetry.addData("reachable / safe", shot.reachable + " / " + shot.safe);
+            if (!shot.reachable) {
+                telemetry.addData("NO SHOT because", shot.failureReason);
+            }
             telemetry.addData("turret angle cmd", flagNaN(shot.turretAngleDeg));
-            telemetry.addData("launch angle", flagNaN(shot.launchAngleDeg));
+            telemetry.addData("launch angle / hood from vertical", "%s / %.1f", flagNaN(shot.launchAngleDeg), 90 - shot.launchAngleDeg);
             telemetry.addData("target RPM", flagNaN(shot.flywheelRPM));
             telemetry.addData("clearance (m)", "%.3f", shot.minimumClearanceMeters);
             telemetry.addData("planner time (ms)", "%.1f", shooterController.plannerMs);
@@ -181,11 +202,17 @@ public class Test_tele extends OpModeEX {
             } else {
                 try {
                     tune.save();
-                    tuneStatus = "saved";
+                    ShooterTuning.save();
+                    tuneStatus = "saved turret + shooter";
                 } catch (Exception e) {
                     tuneStatus = "SAVE FAILED: " + e.getMessage();
                 }
             }
+        }
+
+        if (!lastGamepad1.right_stick_button && currentGamepad1.right_stick_button) {
+            odometry.setPose(ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg);
+            poseStatus = "set";
         }
 
         if (!lastGamepad1.b && currentGamepad1.b) {
@@ -250,6 +277,11 @@ public class Test_tele extends OpModeEX {
     }
 
     private void sendDashboardGraph(AxonEncoder encoder, SetTurretAngle turret) {
+        if (packetTimer.milliseconds() < 33) {
+            return;
+        }
+        packetTimer.reset();
+
         TelemetryPacket packet = new TelemetryPacket();
         packet.put("target", turret.getTargetPosition());
         packet.put("profilePos", turret.getProfilePosition());
@@ -258,6 +290,12 @@ public class Test_tele extends OpModeEX {
         packet.put("actualVel", encoder.getVelocity());
         packet.put("output", turret.getOutput());
         packet.put("error", turret.getPositionError());
+        packet.put("rpm", shooterController.RPM);
+        packet.put("rpmTarget", shooterController.getTargetRPM());
+        packet.put("flywheelPower", shooterController.flywheelPower);
+        if (ShooterTuning.fieldView) {
+            fieldView.draw(packet, shooterController, odometry);
+        }
         FtcDashboard.getInstance().sendTelemetryPacket(packet);
     }
 
@@ -270,8 +308,6 @@ public class Test_tele extends OpModeEX {
         double voltage = encoder.getVoltage();
         double dAngle = angle - windowStartAngle;
         double dVoltage = voltage - windowStartVoltage;
-        measuredTurretVel = dAngle / turretWindow.seconds();
-
         if (Math.abs(dAngle) > 2.0) {
             if (Math.abs(dVoltage) < 1.0) {
                 voltageVerdict = (Math.signum(dVoltage) == -Math.signum(dAngle))
@@ -279,16 +315,11 @@ public class Test_tele extends OpModeEX {
                         : "voltage UP when angle UP";
             }
 
-            double reported = encoder.getVelocity();
-            if (Double.isNaN(reported) || Double.isInfinite(reported)) {
-                encoderVelVerdict = "BROKEN: " + reported;
-            } else {
-                encoderVelVerdict = Math.signum(reported) == Math.signum(dAngle) ? "OK (matches angle change)" : "WRONG SIGN";
-            }
-
             double power = shooterController.manualTurretPower;
             if (shooterController.turretDebugMode == TurretDebugMode.MANUAL && Math.abs(power) > 0.05) {
-                kVEstimate = power / measuredTurretVel;
+                if (Math.abs(encoder.getVelocity()) > 20) {
+                    kVEstimate = power / encoder.getVelocity();
+                }
                 turretDirectionVerdict = Math.signum(power) == Math.signum(dAngle)
                         ? "OK: + power -> angle UP (" + shooterController.manualServoSelect + ")"
                         : "REVERSED: + power -> angle DOWN (" + shooterController.manualServoSelect + ")";
@@ -300,6 +331,40 @@ public class Test_tele extends OpModeEX {
         turretWindow.reset();
     }
 
+    /** Compares AxonEncoder.getVelocity() with the change in AxonEncoder.getTurretAngle() every loop, over one second. */
+    private void checkVelocityAgreement(AxonEncoder encoder) {
+        double angle = encoder.getTurretAngle();
+        double dt = velClock.seconds();
+        velClock.reset();
+
+        double reported = encoder.getVelocity();
+        if (Double.isNaN(reported) || Double.isInfinite(reported)) {
+            encoderVelVerdict = "BROKEN: " + reported;
+            return;
+        }
+
+        if (!Double.isNaN(lastVelAngle) && dt > 0) {
+            double derived = (angle - lastVelAngle) / dt;
+            if (Math.abs(derived) > 60 && Math.abs(reported) > 60) {
+                velTotal++;
+                if (Math.signum(derived) == Math.signum(reported)) velAgree++;
+            }
+        }
+        lastVelAngle = angle;
+
+        if (velWindow.seconds() >= 1.0) {
+            if (velTotal >= 5) {
+                double percent = 100.0 * velAgree / velTotal;
+                encoderVelVerdict = percent >= 85 ? String.format("OK, matches angle change (%.0f%%)", percent)
+                        : percent <= 15 ? String.format("REVERSED (%.0f%%): flip AxonEncoder.TURRET_DIRECTION", percent)
+                        : String.format("mixed (%.0f%%)", percent);
+            }
+            velAgree = 0;
+            velTotal = 0;
+            velWindow.reset();
+        }
+    }
+
     private void checkHeadingDirection() {
         if (headingWindow.seconds() < CHECK_WINDOW_S) {
             return;
@@ -309,11 +374,11 @@ public class Test_tele extends OpModeEX {
         double dHeading = normalize(heading - windowStartHeading);
 
         if (Math.abs(dHeading) > 3.0) {
-            double hVel = odometry.getHeadingVelocity();
+            double hVel = odometry.getHeadingVelocityDeg();
             headingVerdict = (dHeading > 0 ? "heading UP" : "heading DOWN")
                     + (Math.signum(hVel) == Math.signum(dHeading)
-                    ? ", HVel sign MATCHES"
-                    : ", HVel sign OPPOSITE (negate it for planner)");
+                    ? ", velocity sign MATCHES"
+                    : ", velocity sign OPPOSITE (fix Odometry.getHeadingVelocityDeg)");
         }
 
         windowStartHeading = heading;
