@@ -87,6 +87,10 @@ public class SetTurretAngle {
     private double targetRate = 0;
     private long lastRequestNanos = 0;
 
+    // Behind the turret's travel limits the target sits at one limit; near the +/-180 seam it keeps the side it was on.
+    private static final double DEAD_ZONE_HYSTERESIS = 15.0;
+    private double lastResolvedSide = 0;
+
 
     public SetTurretAngle(
             Servo servo,
@@ -239,7 +243,12 @@ public class SetTurretAngle {
                 );
 
         if (minimumTurn > maximumTurn) {
-            return clamp(baseAngle, minPosition, maxPosition);
+            double side = Math.signum(baseAngle);
+            if (Math.abs(baseAngle) > 180.0 - DEAD_ZONE_HYSTERESIS && lastResolvedSide != 0) {
+                side = lastResolvedSide;
+            }
+            lastResolvedSide = side;
+            return side > 0 ? maxPosition : minPosition;
         }
 
         double bestTarget = baseAngle;
@@ -268,6 +277,9 @@ public class SetTurretAngle {
             }
         }
 
+        if (bestTarget != 0) {
+            lastResolvedSide = Math.signum(bestTarget);
+        }
         return bestTarget;
     }
 

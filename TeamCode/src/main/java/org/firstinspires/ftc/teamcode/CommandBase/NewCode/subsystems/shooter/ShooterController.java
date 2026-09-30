@@ -19,6 +19,8 @@ public class ShooterController extends SubSystem {
     ElapsedTime plannerTimer = new ElapsedTime();
     ElapsedTime loopTimer = new ElapsedTime();
     FlywheelController flywheel = new FlywheelController();
+    PlannerInputFilter inputFilter = new PlannerInputFilter();
+    ShotSolutionHold solutionHold = new ShotSolutionHold();
     boolean wasTargeting = false;
     public AxonEncoder encoder;
     Odometry OdoMetry;
@@ -110,6 +112,13 @@ public class ShooterController extends SubSystem {
         flywheel.integralMax = ShooterTuning.flywheelIntegralMax;
         flywheel.integralZoneRpm = ShooterTuning.flywheelIntegralZoneRpm;
         flywheel.maxPower = Math.max(0, Math.min(1, ShooterTuning.flywheelMaxPower));
+
+        inputFilter.timeConstantSeconds = ShooterTuning.plannerVelocityFilterSeconds;
+        inputFilter.velocityDeadbandMps = ShooterTuning.plannerVelocityDeadbandMps;
+        inputFilter.headingRateDeadbandDps = ShooterTuning.plannerHeadingRateDeadbandDps;
+        inputFilter.turretRateDeadbandDps = ShooterTuning.plannerTurretRateDeadbandDps;
+        inputFilter.useAcceleration = ShooterTuning.plannerUseAcceleration;
+        solutionHold.holdSolves = (int) Math.max(0, ShooterTuning.plannerHoldSolves);
     }
 
     public void setHoodDegrees(double theta) {
@@ -171,6 +180,17 @@ public class ShooterController extends SubSystem {
         double dt = Math.min(0.1, loopTimer.seconds());
         loopTimer.reset();
 
+        inputFilter.update(
+                OdoMetry.getXVelocity() / 100,
+                OdoMetry.getYVelocity() / 100,
+                OdoMetry.getHeadingVelocityDeg(),
+                encoder.getVelocity(),
+                OdoMetry.getXAcceleration() / 100,
+                OdoMetry.getYAcceleration() / 100,
+                OdoMetry.getHeadingAccelerationDeg(),
+                dt
+        );
+
         double rawRpm = shooterMotor.getVelocity() / ShooterTuning.flywheelTicksPerRev * 60;
         double filter = Math.max(0.01, Math.min(1, ShooterTuning.flywheelRpmFilter));
         RPM += filter * (rawRpm - RPM);
@@ -203,6 +223,7 @@ public class ShooterController extends SubSystem {
         } else {
             stopFlywheel();
             turretController.stop();
+            solutionHold.reset();
         }
 
         wasTargeting = targeting && turretDebugMode == TurretDebugMode.OFF;
@@ -227,17 +248,17 @@ public class ShooterController extends SubSystem {
                 OdoMetry.X()/100,
                 OdoMetry.Y()/100,
 
-                OdoMetry.getXVelocity()/100,
-                OdoMetry.getYVelocity()/100,
+                inputFilter.velocityX(),
+                inputFilter.velocityY(),
 
-                OdoMetry.getXAcceleration()/100,
-                OdoMetry.getYAcceleration()/100,
+                inputFilter.accelerationX(),
+                inputFilter.accelerationY(),
 
                 OdoMetry.Heading(),
-                OdoMetry.getHeadingVelocityDeg(),
-                OdoMetry.getHeadingAccelerationDeg(),
+                inputFilter.headingRate(),
+                inputFilter.headingAcceleration(),
 
-                encoder.getVelocity()
+                inputFilter.turretRate()
         );
 
         long plannerStart = System.nanoTime();
@@ -250,13 +271,15 @@ public class ShooterController extends SubSystem {
         lastShot = shot;
         lastRobotState = robot;
 
-        if (shot.reachable
-                && Double.isFinite(shot.turretAngleDeg)
-                && Double.isFinite(shot.launchAngleDeg)
-                && Double.isFinite(shot.flywheelRPM)) {
-            targetRPM = shot.flywheelRPM;
-            turretController.setTarget(shot.turretAngleDeg, 1.0, false);
-            setHoodDegrees(shot.launchAngleDeg);
+        Shotplanner.ShotSolution act = solutionHold.apply(shot);
+
+        if (act.reachable
+                && Double.isFinite(act.turretAngleDeg)
+                && Double.isFinite(act.launchAngleDeg)
+                && Double.isFinite(act.flywheelRPM)) {
+            targetRPM = act.flywheelRPM;
+            turretController.setTarget(act.turretAngleDeg, 1.0, false);
+            setHoodDegrees(act.launchAngleDeg);
         } else {
             turretController.setTarget(getGoalBearingDeg(), 1.0, false);
         }

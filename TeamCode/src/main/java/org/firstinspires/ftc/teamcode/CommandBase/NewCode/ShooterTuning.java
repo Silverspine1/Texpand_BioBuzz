@@ -35,6 +35,14 @@ public class ShooterTuning {
     public static double plannerDelaySeconds = 0.10;
     public static double plannerPeriodMs = 50;
 
+    // Planner input cleaning: velocities are smoothed, and acceleration is off because it is differentiated noise
+    public static double plannerVelocityFilterSeconds = 0.06;
+    public static double plannerVelocityDeadbandMps = 0.02;
+    public static double plannerHeadingRateDeadbandDps = 2.0;
+    public static double plannerTurretRateDeadbandDps = 5.0;
+    public static boolean plannerUseAcceleration = false;
+    public static double plannerHoldSolves = 4;
+
     // Hood: two measured points (servo degrees -> launch angle above horizontal) define the whole mapping.
     // The hood is 15-45 deg from vertical, so the launch angle is 90 minus that: 75 down to 45.
     public static double hoodServoAtMinDeg = 0;

@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter;
 
+import java.util.ArrayList;
+import java.util.List;
 
 public class Shotplanner {
 
@@ -162,9 +164,8 @@ public class Shotplanner {
     private static final double DT = 0.01;
     private static final double MAX_FLIGHT_TIME = 2.0;
     private static final double MIN_MUZZLE_SPEED = 0.5;
-    private static final double COARSE_ANGLE_STEP = 4.0;
-    private static final double FINE_ANGLE_STEP = 0.5;
-    private static final double FINE_ANGLE_RANGE = 2.0;
+    private static final double ANGLE_STEP = 2.0;
+    private static final double PLATEAU_CLEARANCE = 0.01;
     private static final int SPEED_SEARCH_ITERATIONS = 10;
     private static final int YAW_CORRECTION_ITERATIONS = 3;
     private static final int CLEARANCE_SUBSTEPS = 5;
@@ -277,24 +278,40 @@ public class Shotplanner {
                 distance, config.minLaunchAngleDeg, config.maxLaunchAngleDeg);
     }
 
+    /**
+     * Clearance is nearly flat over a wide band of launch angles, so picking the single best angle flips with the
+     * slightest noise. Instead take the clearance-weighted centre of that band, which moves smoothly with the inputs.
+     */
     private Candidate findBestCandidate(RobotState robot, HiveTarget target) {
+        List<Candidate> candidates = new ArrayList<>();
         Candidate best = null;
 
         for (double angle = config.minLaunchAngleDeg;
              angle <= config.maxLaunchAngleDeg + 1e-6;
-             angle += COARSE_ANGLE_STEP) {
-            best = chooseBetter(best, solveAngle(robot, target, angle));
+             angle += ANGLE_STEP) {
+            Candidate candidate = solveAngle(robot, target, angle);
+            if (candidate == null) continue;
+            candidates.add(candidate);
+            if (best == null || candidate.clearance > best.clearance) best = candidate;
         }
 
         if (best == null) return null;
 
-        double start = Math.max(config.minLaunchAngleDeg, best.launchAngleDeg - FINE_ANGLE_RANGE);
-        double end = Math.min(config.maxLaunchAngleDeg, best.launchAngleDeg + FINE_ANGLE_RANGE);
-
-        for (double angle = start; angle <= end + 1e-6; angle += FINE_ANGLE_STEP) {
-            best = chooseBetter(best, solveAngle(robot, target, angle));
+        double floor = best.clearance - PLATEAU_CLEARANCE;
+        double weightSum = 0;
+        double angleSum = 0;
+        for (Candidate candidate : candidates) {
+            double weight = candidate.clearance - floor;
+            if (weight <= 0) continue;
+            weightSum += weight;
+            angleSum += weight * candidate.launchAngleDeg;
         }
 
+        double centre = weightSum > 0 ? angleSum / weightSum : best.launchAngleDeg;
+        Candidate centred = solveAngle(robot, target, centre);
+        if (centred != null && centred.clearance >= floor) {
+            return centred;
+        }
         return best;
     }
 
@@ -643,19 +660,6 @@ public class Shotplanner {
                 target.openingY - (robot.y + axisOffset.y),
                 target.openingX - (robot.x + axisOffset.x)
         ));
-    }
-
-    private Candidate chooseBetter(Candidate current, Candidate next) {
-        if (next == null) return current;
-        if (current == null) return next;
-
-        boolean currentSafe = current.clearance >= config.requiredClearanceMeters;
-        boolean nextSafe = next.clearance >= config.requiredClearanceMeters;
-
-        if (nextSafe != currentSafe) return nextSafe ? next : current;
-        if (next.clearance > current.clearance + 0.001) return next;
-        if (Math.abs(next.clearance - current.clearance) <= 0.001 && next.rpm < current.rpm) return next;
-        return current;
     }
 
     private double preferredAimHeight() {
