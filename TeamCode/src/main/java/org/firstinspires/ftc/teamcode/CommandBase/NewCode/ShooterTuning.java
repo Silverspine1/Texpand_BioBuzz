@@ -23,14 +23,23 @@ public class ShooterTuning {
 
     private static final String FILE_NAME = "shooter_tune.properties";
 
+    // Bumped when defaults change meaning; values listed in RESET_ON_UPGRADE are then taken from the new defaults.
+    private static final String SETTINGS_VERSION = "2";
+    private static final String[] RESET_ON_UPGRADE = {"flywheelTicksPerRev", "magnusK", "muzzleEfficiency", "flywheelKF"};
+
     // Shot physics
+    // Counter roller cancels the spin, so no Magnus lift; ball speed is about the wheel's surface speed
     public static double flywheelRadiusMeters = 0.036;
     public static double muzzleEfficiency = 1.0;
-    public static double magnusK = 0.0065;
+    public static double magnusK = 0.0;
     public static double maxFlywheelRPM = 6000;
     public static double requiredClearanceMeters = 0.025;
     public static double muzzleHeightMeters = 0.2;
     public static double turretAxisForwardMeters = 0.1;
+    // Sideways offset of the turret axis from the odometry point. Positive is toward the side heading increases toward.
+    public static double turretAxisSidewaysMeters = 0.0;
+    // Turret encoder reading when the turret really points straight ahead
+    public static double turretZeroOffsetDeg = 0.0;
     public static double muzzleForwardFromTurretMeters = 0.05;
     public static double plannerDelaySeconds = 0.10;
     public static double plannerPeriodMs = 50;
@@ -41,6 +50,7 @@ public class ShooterTuning {
     public static double plannerHeadingRateDeadbandDps = 2.0;
     public static double plannerTurretRateDeadbandDps = 5.0;
     public static boolean plannerUseAcceleration = false;
+    public static boolean plannerUseTurretRate = false;
     public static double plannerHoldSolves = 4;
 
     // Hood: two measured points (servo degrees -> launch angle above horizontal) define the whole mapping.
@@ -58,7 +68,8 @@ public class ShooterTuning {
     public static double openingBottomZ = 1.36;
 
     // Flywheel: power = kF * targetRPM + kP * error + integral(kI * error)
-    public static double flywheelTicksPerRev = 33.6;
+    // 1:1 goBILDA 6000 rpm motor is 28 ticks per rev. Check: full power with no load should read about 5800-6000 rpm.
+    public static double flywheelTicksPerRev = 28;
     public static double flywheelKF = 0.00018;
     public static double flywheelKP = 0.0003;
     public static double flywheelKI = 0.0008;
@@ -88,6 +99,7 @@ public class ShooterTuning {
 
     public static void save() throws IOException {
         Properties p = new Properties();
+        p.setProperty("settingsVersion", SETTINGS_VERSION);
         for (Field f : ShooterTuning.class.getDeclaredFields()) {
             if (!tunable(f)) continue;
             try {
@@ -117,9 +129,11 @@ public class ShooterTuning {
                 p.load(in);
             }
 
+            boolean upgraded = !SETTINGS_VERSION.equals(p.getProperty("settingsVersion"));
             int applied = 0;
             for (Field f : ShooterTuning.class.getDeclaredFields()) {
                 if (!tunable(f)) continue;
+                if (upgraded && java.util.Arrays.asList(RESET_ON_UPGRADE).contains(f.getName())) continue;
                 String text = p.getProperty(f.getName());
                 if (text == null) continue;
                 try {

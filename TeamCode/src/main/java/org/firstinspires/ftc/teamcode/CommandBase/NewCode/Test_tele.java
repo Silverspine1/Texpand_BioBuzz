@@ -141,7 +141,10 @@ public class Test_tele extends OpModeEX {
 
         telemetry.addLine("=== SHOT PLANNER ===");
         telemetry.addData("goal side (BACK)", shooterController.blueHiveSide);
+        shooterController.manualFlywheelPower = gamepad2.right_trigger;
         telemetry.addData("targeting (dpad up)", shooterController.targeting);
+        telemetry.addData("manual flywheel (gamepad2 R-trigger)", "%.2f  raw %.0f ticks/s", shooterController.manualFlywheelPower,
+                shooterController.flywheelTicksPerSecond);
         telemetry.addData("flywheel RPM / target", "%.0f / %.0f  power %.2f  %s", shooterController.RPM,
                 shooterController.getTargetRPM(), shooterController.flywheelPower,
                 shooterController.flywheelReady() ? "READY" : "");

@@ -45,7 +45,7 @@ public class TargetingDebugView {
 
         drawRay(canvas, x, y, Math.toDegrees(Math.atan2(hive.openingY - y, hive.openingX - x)),
                 Math.hypot(hive.openingX - x, hive.openingY - y), "#9e9e9e", 1, 0.8);
-        drawRay(canvas, x, y, heading + shooter.encoder.getTurretAngle(), 1.6, "#00bcd4", 3, 1.0);
+        drawRay(canvas, x, y, heading + shooter.getTurretAimDeg(), 1.6, "#00bcd4", 3, 1.0);
 
         Shotplanner.ShotSolution shot = shooter.lastShot;
         if (shot != null && shot.reachable) {

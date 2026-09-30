@@ -82,7 +82,8 @@ public class SetTurretAngle {
     private double delayedProfileVelocity;
 
     // A continuously moving target is led by targetRate * latencyCompensation so tracking doesn't lag.
-    private static final double TRACKING_JUMP = 10.0;
+    private static final double TRACKING_JUMP = 4.0;
+    private static final double MAX_LEAD = 3.0;
     private static final double TRACKING_TIMEOUT = 0.25;
     private double targetRate = 0;
     private long lastRequestNanos = 0;
@@ -190,7 +191,7 @@ public class SetTurretAngle {
 
         if (targetNeedsResolution) {
             targetPosition = resolveTarget(
-                    requestedAngle + targetRate * latencyCompensation,
+                    requestedAngle + clamp(targetRate * latencyCompensation, -MAX_LEAD, MAX_LEAD),
                     Position,
                     useExtraRange
             );

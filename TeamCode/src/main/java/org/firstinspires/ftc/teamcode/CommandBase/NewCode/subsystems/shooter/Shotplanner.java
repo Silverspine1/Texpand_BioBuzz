@@ -21,7 +21,7 @@ public class Shotplanner {
         public double maxLaunchAngleDeg = 80.0;
         public double maxFlywheelRPM = 6000.0;
 
-        public double magnusK = 0.0065;
+        public double magnusK = 0.0;
         public double requiredClearanceMeters = 0.025;
 
         public double cellWidthMeters = 0.508;
@@ -151,6 +151,7 @@ public class Shotplanner {
         public double muzzleSpeedMetersPerSecond;
         public double flightTimeSeconds;
         public double minimumClearanceMeters;
+        public double releaseHeadingDeg;
         public String failureReason = "";
     }
 
@@ -181,6 +182,11 @@ public class Shotplanner {
         return config;
     }
 
+    /** Field direction (deg) from the turret axis straight at the goal; the same geometry the shot solution starts from. */
+    public double bearingToTargetDeg(RobotState robot, HiveTarget target) {
+        return normalizeDegrees(initialYaw(robot, target));
+    }
+
     public ShotSolution calculateShot(RobotState currentState,
                                       HiveTarget target,
                                       double mechanicalDelaySeconds) {
@@ -200,6 +206,7 @@ public class Shotplanner {
         }
 
         result.reachable = true;
+        result.releaseHeadingDeg = releaseState.headingDeg;
         result.safe = best.clearance >= config.requiredClearanceMeters;
         result.turretAngleDeg = normalizeDegrees(best.fieldYawDeg - releaseState.headingDeg);
         result.launchAngleDeg = best.launchAngleDeg;
@@ -693,11 +700,11 @@ public class Shotplanner {
     }
 
     private double muzzleSpeedToRPM(double muzzleSpeed) {
-        return 60.0 * muzzleSpeed / (Math.PI * config.flywheelRadiusMeters * config.muzzleEfficiency);
+        return 60.0 * muzzleSpeed / (2.0 * Math.PI * config.flywheelRadiusMeters * config.muzzleEfficiency);
     }
 
     private double rpmToMuzzleSpeed(double rpm) {
-        return Math.PI * config.flywheelRadiusMeters * config.muzzleEfficiency * rpm / 60.0;
+        return 2.0 * Math.PI * config.flywheelRadiusMeters * config.muzzleEfficiency * rpm / 60.0;
     }
 
     private double getMaxMuzzleSpeed() {

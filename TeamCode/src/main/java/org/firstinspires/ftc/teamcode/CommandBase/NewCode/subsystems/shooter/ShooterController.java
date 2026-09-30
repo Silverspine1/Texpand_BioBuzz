@@ -35,6 +35,8 @@ public class ShooterController extends SubSystem {
     double targetRPM = 0;
     public double RPM;
     public double flywheelPower = 0;
+    public double manualFlywheelPower = 0;
+    public double flywheelTicksPerSecond = 0;
     public boolean targeting = false;
 
     public enum TurretDebugMode { OFF, MANUAL, CLOSED_LOOP }
@@ -100,6 +102,7 @@ public class ShooterController extends SubSystem {
         c.muzzleHeightMeters = ShooterTuning.muzzleHeightMeters;
         c.turretAxisForwardMeters = ShooterTuning.turretAxisForwardMeters;
         c.muzzleForwardFromTurretMeters = ShooterTuning.muzzleForwardFromTurretMeters;
+        c.turretAxisLeftMeters = ShooterTuning.turretAxisSidewaysMeters;
 
         double low = Math.min(ShooterTuning.hoodLaunchAtMinDeg, ShooterTuning.hoodLaunchAtMaxDeg);
         double high = Math.max(ShooterTuning.hoodLaunchAtMinDeg, ShooterTuning.hoodLaunchAtMaxDeg);
@@ -150,16 +153,20 @@ public class ShooterController extends SubSystem {
         return shotPlanner.getConfig();
     }
 
-    /** Turret angle (robot-relative, CCW +) that points straight at the goal from the current pose. */
+    /** Turret angle that points straight at the goal from the turret axis, in the planner's convention. */
     public double getGoalBearingDeg() {
-        Shotplanner.HiveTarget hive = getHiveTarget();
-        double dx = hive.openingX - OdoMetry.X() / 100;
-        double dy = hive.openingY - OdoMetry.Y() / 100;
-        double bearing = Math.toDegrees(Math.atan2(dy, dx)) - OdoMetry.Heading();
+        Shotplanner.RobotState pose = new Shotplanner.RobotState(
+                OdoMetry.X() / 100, OdoMetry.Y() / 100, 0, 0, OdoMetry.Heading(), 0, 0);
+        double bearing = shotPlanner.bearingToTargetDeg(pose, getHiveTarget()) - OdoMetry.Heading();
         bearing %= 360.0;
         if (bearing > 180) bearing -= 360;
         if (bearing <= -180) bearing += 360;
         return bearing;
+    }
+
+    /** Where the turret is actually pointing, in the planner's convention (encoder reading minus the zero offset). */
+    public double getTurretAimDeg() {
+        return encoder.getTurretAngle() - ShooterTuning.turretZeroOffsetDeg;
     }
 
     public double getTargetRPM() {
@@ -191,7 +198,8 @@ public class ShooterController extends SubSystem {
                 dt
         );
 
-        double rawRpm = shooterMotor.getVelocity() / ShooterTuning.flywheelTicksPerRev * 60;
+        flywheelTicksPerSecond = shooterMotor.getVelocity();
+        double rawRpm = flywheelTicksPerSecond / Math.max(1, ShooterTuning.flywheelTicksPerRev) * 60;
         double filter = Math.max(0.01, Math.min(1, ShooterTuning.flywheelRpmFilter));
         RPM += filter * (rawRpm - RPM);
 
@@ -238,9 +246,9 @@ public class ShooterController extends SubSystem {
 
     private void stopFlywheel() {
         targetRPM = 0;
-        flywheelPower = 0;
+        flywheelPower = Math.max(0, Math.min(1, manualFlywheelPower));
         flywheel.reset();
-        shooterMotor.update(0);
+        shooterMotor.update(flywheelPower);
     }
 
     private void runShotPlanner() {
@@ -258,7 +266,7 @@ public class ShooterController extends SubSystem {
                 inputFilter.headingRate(),
                 inputFilter.headingAcceleration(),
 
-                inputFilter.turretRate()
+                ShooterTuning.plannerUseTurretRate ? inputFilter.turretRate() : 0
         );
 
         long plannerStart = System.nanoTime();
@@ -271,17 +279,17 @@ public class ShooterController extends SubSystem {
         lastShot = shot;
         lastRobotState = robot;
 
-        Shotplanner.ShotSolution act = solutionHold.apply(shot);
+        Shotplanner.ShotSolution act = solutionHold.apply(shot, OdoMetry.Heading());
 
         if (act.reachable
                 && Double.isFinite(act.turretAngleDeg)
                 && Double.isFinite(act.launchAngleDeg)
                 && Double.isFinite(act.flywheelRPM)) {
             targetRPM = act.flywheelRPM;
-            turretController.setTarget(act.turretAngleDeg, 1.0, false);
+            turretController.setTarget(act.turretAngleDeg + ShooterTuning.turretZeroOffsetDeg, 1.0, false);
             setHoodDegrees(act.launchAngleDeg);
         } else {
-            turretController.setTarget(getGoalBearingDeg(), 1.0, false);
+            turretController.setTarget(getGoalBearingDeg() + ShooterTuning.turretZeroOffsetDeg, 1.0, false);
         }
     }
 }
