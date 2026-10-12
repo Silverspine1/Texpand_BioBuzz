@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter;
 
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
@@ -90,6 +91,7 @@ public class ShooterController extends SubSystem {
 
         applyTuning();
         loopTimer.reset();
+        shooterMotor.setDirection(DcMotorSimple.Direction.REVERSE);
     }
 
     private void applyTuning() {
