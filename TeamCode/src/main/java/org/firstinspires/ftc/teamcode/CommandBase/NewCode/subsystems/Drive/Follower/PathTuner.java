@@ -44,6 +44,7 @@ import dev.weaponboy.nexus_pathing.RobotUtilities.Vector2D;
  * Place the robot mid-field (180,180) facing 0, dpad_up to start.
  * Outputs: /sdcard/FIRST/datalogs/tune_best.txt, tune_paths.csv.
  * Controls: dpad_up = start, B = stop & save, X = skip current step.
+ * Before start: dpad left/right = max power, bumpers = tuning area size (cm).
  */
 @TeleOp(name = "PathTuner (self tuning)", group = "tuning")
 public class PathTuner extends OpModeEX {
@@ -76,7 +77,12 @@ public class PathTuner extends OpModeEX {
 
     // field / safety
     private static final double CX = 180, CY = 180;
-    private static final double BOX_MIN = 55, BOX_MAX = 305;
+
+    // operator-adjustable (IDLE only): max motor power and tuning-area side length
+    private double maxPower = 0.5;
+    private double areaSize = 250;   // cm, square centred on (CX, CY)
+    private static final double POWER_STEP = 0.05, POWER_MIN = 0.2;
+    private static final double AREA_STEP = 10, AREA_MIN = 120, AREA_MAX = 340;
 
     // known-good gains ONLY for driving home between steps (never tuned/saved).
     // ~2x the old conservative set - returns were crawling. Only used until
@@ -191,6 +197,7 @@ public class PathTuner extends OpModeEX {
         telemetry.addLine("PathTuner (self tuning). Robot at CENTRE, facing 0.");
         telemetry.addLine("No values to set - everything is measured.");
         telemetry.addLine("dpad_up = start,  B = stop+save,  X = skip step");
+        telemetry.addLine("dpad L/R = max power,  bumpers = area size");
     }
 
     @Override
@@ -210,6 +217,7 @@ public class PathTuner extends OpModeEX {
         switch (state) {
             case IDLE:
                 stopDrive();
+                adjustLimits();
                 if (start) {
                     openLog();
                     beginNoise();
@@ -292,7 +300,8 @@ public class PathTuner extends OpModeEX {
     }
 
     private void runBreakRamp(boolean skip) {
-        rampPower = Math.min(RAMP_MAX_POWER, phaseTimer.seconds() * RAMP_RATE);
+        double rampCap = Math.min(RAMP_MAX_POWER, maxPower);
+        rampPower = Math.min(rampCap, phaseTimer.seconds() * RAMP_RATE);
         applyAxisPower(Ax.values()[axIdx], rampPower);
 
         // detect on VELOCITY first (fires with far less latency than waiting
@@ -307,8 +316,8 @@ public class PathTuner extends OpModeEX {
                     || Math.hypot(odometry.X() - phaseStartX, odometry.Y() - phaseStartY) > moveThreshT;
         }
 
-        if (moved || rampPower >= RAMP_MAX_POWER || skip) {
-            ks[axIdx] = moved ? rampPower : RAMP_MAX_POWER * 0.5; // no-move fallback
+        if (moved || rampPower >= rampCap || skip) {
+            ks[axIdx] = moved ? rampPower : rampCap * 0.5; // no-move fallback
             stopDrive();
             lurchRefX = phaseStartX; lurchRefY = phaseStartY; lurchRefH = phaseStartH;
             phaseTimer.reset();
@@ -358,12 +367,12 @@ public class PathTuner extends OpModeEX {
 
     private void runMaxVaPush(boolean skip) {
         double t = phaseTimer.seconds();
-        boolean boxHit = outsideBox(MAXVA_MARGIN);
+        boolean boxHit = outsideBox(Math.min(MAXVA_MARGIN, areaSize * 0.16));
         boolean timeUp = t >= MAXVA_MAX_TIME;
 
         if (boxHit || timeUp || skip) { finishMaxVaRun(false); return; }
 
-        applyAxisPower(Ax.values()[axIdx], 1.0);
+        applyAxisPower(Ax.values()[axIdx], maxPower);
 
         if (t - lastSampleT < SAMPLE_DT_MIN) return;
         double v = (Ax.values()[axIdx] == Ax.TURN)
@@ -384,7 +393,7 @@ public class PathTuner extends OpModeEX {
         double vBest = 0;
         for (double[] s : samples) if (s[1] > vBest) vBest = s[1];
         maxV[axIdx] = vBest;
-        maxA[axIdx] = rampSlope(vBest);   // least-squares, not sample-to-sample
+        maxA[axIdx] = rampSlope(vBest) / maxPower;   // least-squares, normalised to per unit power
         phaseTimer.reset();
         state = State.MAXVA_BRAKE;
     }
@@ -416,7 +425,7 @@ public class PathTuner extends OpModeEX {
             state = State.MAXVA_RETURN;
             phaseTimer.reset();
         } else {
-            applyAxisPower(Ax.values()[axIdx], -BRAKE_POWER);
+            applyAxisPower(Ax.values()[axIdx], -Math.min(BRAKE_POWER, maxPower));
         }
     }
 
@@ -592,8 +601,8 @@ public class PathTuner extends OpModeEX {
         double sy = (cy > CY) ? -1 : 1;
         double[][] rel = new double[it.rel.length][2];
         for (int i = 0; i < it.rel.length; i++) {
-            rel[i][0] = it.rel[i][0] * sx;
-            rel[i][1] = it.rel[i][1] * sy;
+            rel[i][0] = it.rel[i][0] * sx * pathScale();
+            rel[i][1] = it.rel[i][1] * sy * pathScale();
         }
 
         double[] last = rel[rel.length - 1];
@@ -738,6 +747,7 @@ public class PathTuner extends OpModeEX {
     }
 
     private void applyAxisPower(Ax axis, double p) {
+        p = clamp(p, -maxPower, maxPower);
         switch (axis) {
             case FWD:  driveBase.queueCommand(driveBase.drivePowers(p, 0, 0)); break;
             case STR:  driveBase.queueCommand(driveBase.drivePowers(0, 0, p)); break;
@@ -791,7 +801,25 @@ public class PathTuner extends OpModeEX {
 
     private void drive(Follower f, double heading) {
         RobotPower cp = f.followPathAuto(heading, odometry.Heading(), odometry.X(), odometry.Y(), odometry.getXVelocity(), odometry.getYVelocity());
-        driveBase.queueCommand(driveBase.drivePowers(cp));
+        driveBase.queueCommand(driveBase.drivePowers(
+                clamp(cp.getVertical(), -maxPower, maxPower),
+                clamp(cp.getHorizontal(), -maxPower, maxPower),
+                clamp(cp.getPivot(), -maxPower, maxPower)));
+    }
+
+    private void adjustLimits() {
+        if (currentGamepad1.dpad_right && !lastGamepad1.dpad_right) maxPower += POWER_STEP;
+        if (currentGamepad1.dpad_left && !lastGamepad1.dpad_left) maxPower -= POWER_STEP;
+        if (currentGamepad1.right_bumper && !lastGamepad1.right_bumper) areaSize += AREA_STEP;
+        if (currentGamepad1.left_bumper && !lastGamepad1.left_bumper) areaSize -= AREA_STEP;
+        maxPower = Math.round(clamp(maxPower, POWER_MIN, 1.0) * 100) / 100.0;
+        areaSize = clamp(areaSize, AREA_MIN, AREA_MAX);
+    }
+
+    /** Path distances shrink with the area so probes always stay inside it
+     *  (1.0 at the default 250 cm area). */
+    private double pathScale() {
+        return clamp((areaSize / 2 - 25) / 100.0, 0.2, 1.0);
     }
 
     private void stopDrive() {
@@ -806,8 +834,9 @@ public class PathTuner extends OpModeEX {
 
     private boolean outsideBox(double margin) {
         double x = odometry.X(), y = odometry.Y();
-        return x < BOX_MIN + margin || x > BOX_MAX - margin
-                || y < BOX_MIN + margin || y > BOX_MAX - margin;
+        double half = areaSize / 2;
+        return x < CX - half + margin || x > CX + half - margin
+                || y < CY - half + margin || y > CY + half - margin;
     }
 
     private double degPerSec() { return odometry.getHVelocity() * 180.0 / Math.PI; }
@@ -830,6 +859,8 @@ public class PathTuner extends OpModeEX {
     // ============================= TELEMETRY / LOGGING =============================
     private void drawTelemetry() {
         telemetry.addData("state", state);
+        telemetry.addData("MAX POWER (dpad L/R)", String.format("%.2f", maxPower));
+        telemetry.addData("TUNING AREA (bumpers)", String.format("%.0f cm  (path scale %.2f)", areaSize, pathScale()));
         telemetry.addData("noise pos/hdg/velT/velH", String.format("%.2f / %.2f / %.1f / %.1f",
                 posNoise, hdgNoise, velNoiseT, velNoiseH));
         telemetry.addData("breakaway F/S/T", String.format("%.2f / %.2f / %.2f",

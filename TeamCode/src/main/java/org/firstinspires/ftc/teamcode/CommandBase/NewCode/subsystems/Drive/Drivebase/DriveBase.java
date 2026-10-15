@@ -28,6 +28,16 @@ public class DriveBase extends SubSystem {
 
     PIDController headingPID = new PIDController(0.025, 0, 0.0003);
 
+    // Direct-drive (bare motor) protection: never plug-reverse a wheel that is
+    // still travelling fast. Above reverseBrakeSpeed a reversal is replaced by
+    // a 0-power command (motor BRAKE, which draws far less current than
+    // plugging); below it the reversal is allowed but slew-limited.
+    public boolean protectReversal = true;
+    public double reverseBrakeSpeed = 25;   // cm/s, robot speed from odometry
+    public double reverseSlewPerSec = 6;    // power/s while crossing/leaving zero
+    private final double[] applied = new double[4];   // LF, RF, LB, RB last output
+    private long lastProtectNanos = 0;
+
     double vertical;
     double turn;
     double strafe;
@@ -89,22 +99,50 @@ public class DriveBase extends SubSystem {
                 double lbT = ((vertical + strafe - turn) / denominator) * speed;
                 double rbT = ((vertical - strafe + turn) / denominator) * speed;
 
+                double m0, m1, m2, m3;
                 if (!engage) {
-                    LF.update(-lfT);
-                    RF.update(rfT);
-                    LB.update(-lbT);
-                    RB.update(rbT);
+                    m0 = -lfT; m1 = rfT; m2 = -lbT; m3 = rbT;
                 } else {
-                    LF.update(lfT);
-                    RF.update(rfT);
-                    LB.update(0);
-                    RB.update(0);
+                    m0 = lfT; m1 = rfT; m2 = 0; m3 = 0;
                 }
+                if (protectReversal) {
+                    long now = System.nanoTime();
+                    double dt = lastProtectNanos == 0 ? 0.02 : Math.min(0.1, (now - lastProtectNanos) / 1e9);
+                    lastProtectNanos = now;
+                    OpModeEX op = (OpModeEX) getOpMode();
+                    double v = Math.hypot(op.odometry.getXVelocity(), op.odometry.getYVelocity())
+                            + Math.abs(op.odometry.getHVelocity()) * 20;  // spin contribution (~wheel radius from centre, cm)
+                    m0 = protect(0, m0, dt, v);
+                    m1 = protect(1, m1, dt, v);
+                    m2 = protect(2, m2, dt, v);
+                    m3 = protect(3, m3, dt, v);
+                }
+                LF.update(m0);
+                RF.update(m1);
+                LB.update(m2);
+                RB.update(m3);
                 ((OpModeEX) getOpMode()).profiler.recordDuration(LoopProfiler.DRIVE_BASE, System.nanoTime() - start);
             },
             () -> true);
 
 
+
+    /** Reversal guard for one wheel. Returns the power to actually send. */
+    private double protect(int i, double target, double dt, double speedCmS) {
+        double cur = applied[i];
+        boolean reversing = cur * target < 0;
+        double out = target;
+
+        if (reversing && speedCmS > reverseBrakeSpeed) {
+            out = 0;                                   // brake instead of plug-reversing
+        } else if (target != 0 && (Math.signum(cur) != Math.signum(target) || Math.abs(cur) < 0.1)) {
+            // crossing zero or leaving rest: limit how fast power builds
+            double maxStep = reverseSlewPerSec * dt;
+            out = cur + Math.max(-maxStep, Math.min(maxStep, target - cur));
+        }
+        applied[i] = out;
+        return out;
+    }
 
     public void driveFieldCentric(double drive, double strafe, double turn, double robotHeading) {
         double headingOffset ;

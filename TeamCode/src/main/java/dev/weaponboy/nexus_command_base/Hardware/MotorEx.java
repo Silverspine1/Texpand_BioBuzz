@@ -38,6 +38,7 @@ public class MotorEx {
         motor = hardwareMap.get(DcMotorEx.class, motorName);
         motor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         motor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         this.executor = Executors.newFixedThreadPool(2);
     }
 
