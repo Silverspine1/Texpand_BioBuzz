@@ -60,9 +60,9 @@ public class DriveBase extends SubSystem {
         executeEX();
     }
 
-    public Command drivePowers(double vertical, double turn, double strafe) {
-        this.turn = turn;
-        this.strafe = strafe;
+    public Command drivePowers(double vertical, double strafe, double turn) {
+        this.turn = -turn;
+        this.strafe = -strafe;
         this.vertical = vertical;
 
         return driveCommand;
@@ -70,9 +70,9 @@ public class DriveBase extends SubSystem {
     }
 
     public Command drivePowers(RobotPower power) {
-        this.turn = power.getPivot();
-        this.strafe = -power.getVertical();
-        this.vertical = -power.getHorizontal();
+        this.turn = -power.getPivot();
+        this.strafe = -power.getHorizontal();
+        this.vertical = power.getVertical();
 
         return driveCommand;
     }
@@ -90,9 +90,9 @@ public class DriveBase extends SubSystem {
                 double rbT = ((vertical - strafe + turn) / denominator) * speed;
 
                 if (!engage) {
-                    LF.update(lfT);
+                    LF.update(-lfT);
                     RF.update(rfT);
-                    LB.update(lbT);
+                    LB.update(-lbT);
                     RB.update(rbT);
                 } else {
                     LF.update(lfT);
