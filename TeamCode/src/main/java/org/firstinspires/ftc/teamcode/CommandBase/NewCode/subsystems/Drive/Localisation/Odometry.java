@@ -80,7 +80,7 @@ public class Odometry extends SubSystem {
                 Register.Y_VELOCITY,
                 Register.H_VELOCITY);
 
-        odo.setOffsets(112, -1, DistanceUnit.MM);
+        odo.setOffsets(20, 20, DistanceUnit.MM);
         odo.setEncoderResolution(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
         odo.setEncoderDirections(GoBildaPinpointDriver.EncoderDirection.FORWARD,
                 GoBildaPinpointDriver.EncoderDirection.FORWARD);
