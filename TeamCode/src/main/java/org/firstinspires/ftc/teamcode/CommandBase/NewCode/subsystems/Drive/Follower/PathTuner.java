@@ -863,8 +863,8 @@ public class PathTuner extends OpModeEX {
         p = clamp(p, -maxPower, maxPower);
         switch (axis) {
             case FWD:  driveBase.queueCommand(driveBase.drivePowers(p, 0, 0)); break;
-            case STR:  driveBase.queueCommand(driveBase.drivePowers(0, 0, p)); break;
-            case TURN: driveBase.queueCommand(driveBase.drivePowers(0, p, 0)); break;
+            case STR:  driveBase.queueCommand(driveBase.drivePowers(0, p, 0)); break;
+            case TURN: driveBase.queueCommand(driveBase.drivePowers(0, 0, p)); break;
         }
     }
 
