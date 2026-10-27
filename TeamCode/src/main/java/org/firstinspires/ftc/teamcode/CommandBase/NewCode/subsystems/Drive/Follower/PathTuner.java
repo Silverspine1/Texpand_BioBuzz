@@ -31,6 +31,8 @@ import dev.weaponboy.nexus_pathing.RobotUtilities.Vector2D;
  *                  from the plateau; accel-per-power from a LEAST-SQUARES fit
  *                  of the whole ramp (no single-sample derivatives -> no
  *                  noise-spike gains). Braking is a non-blocking state.
+ *                  Measured values are checked against the MIN/MAX speed and
+ *                  accel bounds below (clamped if outside).
  *   4. SEARCH    - per axis, shrink the settling target ts while probe runs
  *                  pass. On the first fail, back off with margin (last pass
  *                  x1.2) and CONFIRM with a fresh run before locking - gains
@@ -41,10 +43,18 @@ import dev.weaponboy.nexus_pathing.RobotUtilities.Vector2D;
  * re-derived from the final Kp so clamping can never produce an underdamped
  * (wobbly) pair.
  *
+ * OUTPUT MODE (Y button):
+ *   AS TESTED  - saved values match what the robot did at the test power.
+ *   FULL POWER - tune at e.g. 0.8 power for safety, but the saved gains and
+ *                maxV/maxA are scaled to what the robot does at 1.0 power
+ *                (friction-aware: speed ~ (power - kS)). Can be toggled any
+ *                time, including after FINISHED (re-saves automatically).
+ *
  * Place the robot mid-field (180,180) facing 0, dpad_up to start.
  * Outputs: /sdcard/FIRST/datalogs/tune_best.txt, tune_paths.csv.
- * Controls: dpad_up = start, B = stop & save, X = skip current step.
- * Before start: dpad left/right = max power, bumpers = tuning area size (cm).
+ * Controls: dpad_up = start, B = stop & save, X = skip current step,
+ *           Y = toggle output mode.
+ * Before start: dpad left/right = test power, bumpers = tuning area size (cm).
  */
 @TeleOp(name = "PathTuner (self tuning)", group = "tuning")
 public class PathTuner extends OpModeEX {
@@ -54,7 +64,7 @@ public class PathTuner extends OpModeEX {
     private static final double RAMP_RATE       = 0.25;  // power/s breakaway ramp
     private static final double RAMP_MAX_POWER  = 0.8;   // give up above this
     private static final double LURCH_TIME      = 0.35;  // s to watch post-breakaway drift
-    private static final double MAXVA_MAX_TIME  = 1.2;   // s full-power cap
+    private static final double MAXVA_MAX_TIME  = 1;   // s full-power cap
     private static final double MAXVA_MARGIN    = 40;    // cm inner box for full-power runs
     private static final int    PLATEAU_N       = 5;
     private static final double PLATEAU_TOL     = 0.04;
@@ -78,22 +88,43 @@ public class PathTuner extends OpModeEX {
     // field / safety
     private static final double CX = 180, CY = 180;
 
-    // operator-adjustable (IDLE only): max motor power and tuning-area side length
-    private double maxPower = 0.5;
-    private double areaSize = 250;   // cm, square centred on (CX, CY)
+    // operator-adjustable (IDLE only): test power and tuning-area side length
+    private double maxPower = 0.7;
+    private double areaSize = 150;   // cm, square centred on (CX, CY)
     private static final double POWER_STEP = 0.05, POWER_MIN = 0.2;
     private static final double AREA_STEP = 10, AREA_MIN = 120, AREA_MAX = 340;
 
+    // Output mode, toggled with Y: false = values as tested, true = scaled to full power
+    private boolean fullPowerOutput = false;
+
     // known-good gains ONLY for driving home between steps (never tuned/saved).
-    // ~2x the old conservative set - returns were crawling. Only used until
-    // the first axis is tuned; after that returns run on the tuned gains.
+    // Only used until the first axis is tuned; after that returns run on the
+    // tuned gains. Format: P, D pairs in the order
+    //   X on-path, Y on-path, X last-adjust, Y last-adjust, fast heading, slow heading
+    // (robot X = strafe, robot Y = forward)
+    // Cut for the faster 504 rpm drivetrain: translation /2, heading /3.
     private static final double[] SAFE_GAINS = {
-            0.16, 0.008,  0.3, 0.006,
-            0.05, 0.008,  0.05, 0.014,
-            0.02, 0.001,  0.02, 0.003
+            0.08,    0.004,      0.15,    0.003,      // X on-path, Y on-path
+            0.025,   0.004,      0.025,   0.007,      // X last-adjust, Y last-adjust
+            0.00667, 0.00033,    0.00667, 0.0010      // fast heading, slow heading
     };
-    private static final double FALLBACK_XV = 130, FALLBACK_YV = 181;
+
+    // Used ONLY when a measurement fails (robot didn't move etc).
+    // Keep these inside the bounds below.
+    private static final double FALLBACK_XV = 170, FALLBACK_YV = 220;
     private static final double FALLBACK_XA = 650, FALLBACK_YA = 700;
+
+    // ---- sanity bounds on MEASURED speed / accel ----
+    // These are FULL-POWER (1.0) equivalents, so they stay valid whatever test
+    // power you pick. A measurement outside the range gets clamped to the
+    // nearest bound and flagged in telemetry. Tighten them around your real
+    // robot's numbers (roughly +/-25% of what you expect).
+    // 504 rpm: with ~96 mm wheels the free speed is ~250 cm/s, mecanum
+    // forward a bit under that, strafe lower.
+    private static final double MIN_V_T = 140,  MAX_V_T = 340;    // cm/s
+    private static final double MIN_V_H = 200,  MAX_V_H = 1000;   // deg/s
+    private static final double MIN_A_T = 200, MAX_A_T = 4000;   // cm/s^2 (at power 1.0)
+    private static final double MIN_A_H = 200, MAX_A_H = 6000;   // deg/s^2 (at power 1.0)
 
     // ---- measured values (all start invalid, filled by the phases) ----
     // noise floors
@@ -108,6 +139,8 @@ public class PathTuner extends OpModeEX {
     private final double[] maxV = new double[3];        // FWD, STR, TURN
     private final double[] maxA = new double[3];        // regression slope, per unit power
     private final boolean[] plateauOk = new boolean[3];
+    private final boolean[] vClamped = new boolean[3];  // measurement hit a speed bound
+    private final boolean[] aClamped = new boolean[3];  // measurement hit an accel bound
 
     // ---- axes ----
     private enum Ax { FWD, STR, TURN }                   // FWD=robot Y, STR=robot X
@@ -196,8 +229,9 @@ public class PathTuner extends OpModeEX {
 
         telemetry.addLine("PathTuner (self tuning). Robot at CENTRE, facing 0.");
         telemetry.addLine("No values to set - everything is measured.");
-        telemetry.addLine("dpad_up = start,  B = stop+save,  X = skip step");
-        telemetry.addLine("dpad L/R = max power,  bumpers = area size");
+        telemetry.addLine("dpad_up = START | B = STOP + SAVE | X = SKIP STEP");
+        telemetry.addLine("Y = TOGGLE OUTPUT MODE (as tested / full power)");
+        telemetry.addLine("dpad L/R = test power | bumpers = area size");
     }
 
     @Override
@@ -205,6 +239,13 @@ public class PathTuner extends OpModeEX {
         boolean start = currentGamepad1.dpad_up && !lastGamepad1.dpad_up;
         boolean stop  = currentGamepad1.b && !lastGamepad1.b;
         boolean skip  = currentGamepad1.x && !lastGamepad1.x;
+        boolean toggleMode = currentGamepad1.y && !lastGamepad1.y;
+
+        if (toggleMode) {
+            fullPowerOutput = !fullPowerOutput;
+            // already done? re-save straight away in the newly selected mode
+            if (state == State.FINISHED && tunedGains != null) saveBest();
+        }
 
         if (stop && state != State.IDLE && state != State.FINISHED) {
             if (tunedGains != null) saveBest();
@@ -430,7 +471,10 @@ public class PathTuner extends OpModeEX {
     }
 
     private void finishMaxVa() {
-        // accel-per-power straight from the regression (power was 1.0)
+        // keep measurements inside the sanity bounds before anything uses them
+        applyBounds();
+
+        // accel-per-power straight from the regression
         model.aFwd  = positiveOr(maxA[Ax.FWD.ordinal()],  FALLBACK_YA);
         model.aStr  = positiveOr(maxA[Ax.STR.ordinal()],  FALLBACK_XA);
         model.aTurn = positiveOr(maxA[Ax.TURN.ordinal()], 300);
@@ -446,8 +490,77 @@ public class PathTuner extends OpModeEX {
         safeFollow = new Follower(genConfig);
     }
 
+    /** Clamp measured max speed / accel into [MIN, MAX]. The bounds are
+     *  FULL-POWER equivalents, so each measurement is converted to full power,
+     *  clamped, then converted back to the test power. Failed measurements
+     *  (<= 1) are left alone so they still fall through to the FALLBACK_*
+     *  values instead of being "rescued" up to the minimum. */
+    private void applyBounds() {
+        for (int i = 0; i < 3; i++) {
+            boolean turn = (i == Ax.TURN.ordinal());
+            double vLo = turn ? MIN_V_H : MIN_V_T, vHi = turn ? MAX_V_H : MAX_V_T;
+            double aLo = turn ? MIN_A_H : MIN_A_T, aHi = turn ? MAX_A_H : MAX_A_T;
+            double s = fullScale(i);
+            vClamped[i] = false;
+            aClamped[i] = false;
+
+            if (maxV[i] > 1) {
+                double full = maxV[i] * s;
+                double b = clamp(full, vLo, vHi);
+                if (b != full) { vClamped[i] = true; maxV[i] = b / s; }
+            }
+            if (maxA[i] > 1) {
+                double k = maxPower * s;             // per-unit-power -> full-power accel
+                double full = maxA[i] * k;
+                double b = clamp(full, aLo, aHi);
+                if (b != full) { aClamped[i] = true; maxA[i] = b / k; }
+            }
+        }
+    }
+
     private static double positiveOr(double v, double fallback) {
         return (Double.isNaN(v) || v <= 1) ? fallback : v;
+    }
+
+    // ============================= FULL-POWER SCALING =============================
+    /** Factor that turns a speed measured at the test power into the speed at
+     *  power 1.0. Friction-aware: steady-state speed ~ (power - kS), so
+     *  scale = (1 - kS) / (testPower - kS). Falls back to 1/power if kS is
+     *  unknown or too close to the test power. Always >= 1. */
+    private double fullScale(int axisIdx) {
+        double p = maxPower;
+        if (p >= 0.99) return 1.0;
+        double denom = p - ks[axisIdx];
+        double s = (denom < 0.1) ? 1.0 / p : (1.0 - ks[axisIdx]) / denom;
+        return Math.max(1.0, s);
+    }
+
+    /** Max speed to OUTPUT for an axis (full-power scaled when that mode is on). */
+    private double outV(int idx, double fallback) {
+        double v = positiveOr(maxV[idx], fallback);
+        return (fullPowerOutput && maxV[idx] > 1) ? v * fullScale(idx) : v;
+    }
+
+    /** Accel to OUTPUT for an axis (full-power scaled when that mode is on). */
+    private double outA(int idx, double fallback) {
+        double a = positiveOr(maxA[idx], fallback);
+        return (fullPowerOutput && maxA[idx] > 1) ? a * maxPower * fullScale(idx) : a;
+    }
+
+    /** Gains to OUTPUT. In full-power mode the model is re-run with the
+     *  full-power accel-per-power (everything else - kS, tolerances, locked
+     *  ts - stays as tuned), then the model is restored. */
+    private double[] outputGains() {
+        if (tunedGains == null) return null;
+        if (!fullPowerOutput) return tunedGains;
+
+        double f = model.aFwd, s = model.aStr, t = model.aTurn;
+        if (maxA[Ax.FWD.ordinal()]  > 1) model.aFwd  = f * maxPower * fullScale(Ax.FWD.ordinal());
+        if (maxA[Ax.STR.ordinal()]  > 1) model.aStr  = s * maxPower * fullScale(Ax.STR.ordinal());
+        if (maxA[Ax.TURN.ordinal()] > 1) model.aTurn = t * maxPower * fullScale(Ax.TURN.ordinal());
+        double[] g = model.gains();
+        model.aFwd = f; model.aStr = s; model.aTurn = t;
+        return g;
     }
 
     // ============================= 4. SEARCH =============================
@@ -839,7 +952,7 @@ public class PathTuner extends OpModeEX {
                 || y < CY - half + margin || y > CY + half - margin;
     }
 
-    private double degPerSec() { return odometry.getHVelocity() * 180.0 / Math.PI; }
+    private double degPerSec() { return odometry.getHeadingVelocityDeg(); }
 
     private static RobotConfig buildConfig(double[] p, double maxXV, double maxYV, double maxXA, double maxYA) {
         return new RobotConfig()
@@ -857,9 +970,18 @@ public class PathTuner extends OpModeEX {
     private static double wrap180(double a) { while (a > 180) a -= 360; while (a < -180) a += 360; return a; }
 
     // ============================= TELEMETRY / LOGGING =============================
+    private String modeLabel() {
+        return fullPowerOutput
+                ? "FULL POWER (scaled up from tests at " + String.format("%.2f", maxPower) + ")"
+                : "AS TESTED (at " + String.format("%.2f", maxPower) + " power)";
+    }
+
     private void drawTelemetry() {
+        telemetry.addLine("dpad_up=START  B=STOP+SAVE  X=SKIP STEP");
+        telemetry.addLine("Y = TOGGLE OUTPUT MODE   (idle: dpad L/R = test power, bumpers = area)");
+        telemetry.addData("OUTPUT MODE (press Y)", modeLabel());
         telemetry.addData("state", state);
-        telemetry.addData("MAX POWER (dpad L/R)", String.format("%.2f", maxPower));
+        telemetry.addData("TEST POWER (dpad L/R)", String.format("%.2f", maxPower));
         telemetry.addData("TUNING AREA (bumpers)", String.format("%.0f cm  (path scale %.2f)", areaSize, pathScale()));
         telemetry.addData("noise pos/hdg/velT/velH", String.format("%.2f / %.2f / %.1f / %.1f",
                 posNoise, hdgNoise, velNoiseT, velNoiseH));
@@ -867,10 +989,13 @@ public class PathTuner extends OpModeEX {
                 ks[0], ks[1], ks[2]));
         telemetry.addData("tol X/Y/H (derived)", String.format("%.1f / %.1f / %.1f",
                 model.tolX, model.tolY, model.tolH));
-        telemetry.addData("maxV F/S/T", String.format("%.0f / %.0f / %.0f  plateau %b/%b/%b",
+        telemetry.addData("maxV F/S/T (at test power)", String.format("%.0f / %.0f / %.0f  plateau %b/%b/%b",
                 maxV[0], maxV[1], maxV[2], plateauOk[0], plateauOk[1], plateauOk[2]));
         telemetry.addData("A F/S/T (regression)", String.format("%.0f / %.0f / %.0f",
                 maxA[0], maxA[1], maxA[2]));
+        if (vClamped[0] || vClamped[1] || vClamped[2] || aClamped[0] || aClamped[1] || aClamped[2])
+            telemetry.addData("!! BOUNDS HIT (V F/S/T, A F/S/T)", String.format("%b/%b/%b, %b/%b/%b",
+                    vClamped[0], vClamped[1], vClamped[2], aClamped[0], aClamped[1], aClamped[2]));
         if (state == State.SEARCH_PROBE || state == State.SEARCH_RETURN)
             telemetry.addData("search", axisName(sIdx) + "  ts=" + String.format("%.2f", curTs)
                     + "  iter=" + sIter + (confirming ? "  CONFIRMING" : ""));
@@ -880,13 +1005,19 @@ public class PathTuner extends OpModeEX {
                 lockedTs[0], lockedTs[1], lockedTs[2]));
         telemetry.addData("pos", String.format("%.0f,%.0f  h%.0f",
                 odometry.X(), odometry.Y(), odometry.Heading()));
-        if (tunedGains != null) telemetry.addLine("gains: " + fmt(tunedGains));
+        if (tunedGains != null) {
+            telemetry.addLine("gains (as tested): " + fmt(tunedGains));
+            if (fullPowerOutput) telemetry.addLine("gains (OUTPUT, full power): " + fmt(outputGains()));
+            telemetry.addData("OUTPUT consts maxXV/YV/XA/YA", String.format("%.0f / %.0f / %.0f / %.0f",
+                    outV(Ax.STR.ordinal(), FALLBACK_XV), outV(Ax.FWD.ordinal(), FALLBACK_YV),
+                    outA(Ax.STR.ordinal(), FALLBACK_XA), outA(Ax.FWD.ordinal(), FALLBACK_YA)));
+        }
         for (int i = 0; i < 3; i++) {
             if (!Double.isNaN(firstSettle[i]) && !Double.isNaN(bestSettle[i]))
                 telemetry.addData("settle " + axisName(i), String.format("%.2fs -> %.2fs",
                         firstSettle[i], bestSettle[i]));
         }
-        if (state == State.FINISHED) telemetry.addLine(">>> DONE - saved to tune_best.txt <<<");
+        if (state == State.FINISHED) telemetry.addLine(">>> DONE - saved to tune_best.txt (" + (fullPowerOutput ? "FULL POWER" : "AS TESTED") + ") - Y switches mode + re-saves <<<");
     }
 
     private static String axisName(int i) { return i == 0 ? "X" : i == 1 ? "Y" : "H"; }
@@ -926,15 +1057,17 @@ public class PathTuner extends OpModeEX {
             File dir = new File("/sdcard/FIRST/datalogs");
             if (!dir.exists()) dir.mkdirs();
             FileWriter w = new FileWriter(new File(dir, "tune_best.txt"), false);
-            double[] b = tunedGains != null ? tunedGains : SAFE_GAINS;
+            double[] og = outputGains();
+            double[] b = og != null ? og : SAFE_GAINS;
             w.write("// PathTuner (self tuning) result - everything below was MEASURED\n");
+            w.write("// OUTPUT MODE: " + modeLabel() + "\n");
             w.write(String.format("// odometry noise  pos=%.2fcm hdg=%.2fdeg  vel=%.1fcm/s %.1fdeg/s\n",
                     posNoise, hdgNoise, velNoiseT, velNoiseH));
             w.write(String.format("// breakaway power  fwd=%.2f strafe=%.2f turn=%.2f\n",
                     model.ksFwd, model.ksStr, model.ksTurn));
             w.write(String.format("// derived tolerances  X=%.1f Y=%.1f cm  H=%.1f deg\n",
                     model.tolX, model.tolY, model.tolH));
-            w.write(String.format("// measured maxV  fwd=%.0f strafe=%.0f turn=%.0f  [plateau %b/%b/%b]\n",
+            w.write(String.format("// measured maxV (at test power)  fwd=%.0f strafe=%.0f turn=%.0f  [plateau %b/%b/%b]\n",
                     maxV[0], maxV[1], maxV[2], plateauOk[0], plateauOk[1], plateauOk[2]));
             w.write(String.format("// accel per power (regression)  fwd=%.0f strafe=%.0f turn=%.0f\n",
                     model.aFwd, model.aStr, model.aTurn));
@@ -948,10 +1081,10 @@ public class PathTuner extends OpModeEX {
             w.write(String.format("    .setFastHeadingPD(%.5f, %.5f)\n", b[8], b[9]));
             w.write(String.format("    .setSlowHeadingPD(%.5f, %.5f)\n", b[10], b[11]));
             w.write(String.format("    .setRobotConstants(%.0f, %.0f, %.0f, %.0f);\n",
-                    positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_XV),
-                    positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_YV),
-                    positiveOr(maxA[Ax.STR.ordinal()], FALLBACK_XA),
-                    positiveOr(maxA[Ax.FWD.ordinal()], FALLBACK_YA)));
+                    outV(Ax.STR.ordinal(), FALLBACK_XV),
+                    outV(Ax.FWD.ordinal(), FALLBACK_YV),
+                    outA(Ax.STR.ordinal(), FALLBACK_XA),
+                    outA(Ax.FWD.ordinal(), FALLBACK_YA)));
             w.close();
         } catch (IOException ignored) {}
     }

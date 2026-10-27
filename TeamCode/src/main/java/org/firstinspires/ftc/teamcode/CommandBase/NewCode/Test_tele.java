@@ -38,6 +38,8 @@ public class Test_tele extends OpModeEX {
     private final ElapsedTime pingPongTimer = new ElapsedTime();
 
     private final ElapsedTime moveTimer = new ElapsedTime();
+    private final ElapsedTime Loop = new ElapsedTime();
+
     private boolean moveInProgress = false;
     private double moveStartAngle = 0;
     private double moveTarget = 0;
@@ -45,6 +47,7 @@ public class Test_tele extends OpModeEX {
     private double lastSettleTime = 0;
     private double lastOvershoot = 0;
     private double kVEstimate = 0;
+    double loop = 0;
 
     private String tuneStatus = "defaults (no saved tune)";
     private String poseStatus = "";
@@ -65,7 +68,8 @@ public class Test_tele extends OpModeEX {
 
     @Override
     public void loopEX() {
-        driveBase.drivePowers(gamepad1.right_stick_y, (gamepad1.left_trigger- gamepad1.right_trigger),gamepad1.left_stick_x);
+        Loop.reset();
+        driveBase.drivePowers(gamepad1.right_stick_y,-gamepad1.right_stick_x,-(gamepad1.left_trigger- gamepad1.right_trigger));
         if (gamepad1.right_bumper){
             IntakeHardware.State = intakeHardware.intakeState.intaking;
         }else if(!transfer.transfer) {
@@ -175,6 +179,9 @@ public class Test_tele extends OpModeEX {
             telemetry.addData("planner in: heading / omega", "%.1f deg / %.3f deg/s", rs.headingDeg, rs.angularVelocityDegPerSec);
             telemetry.addData("planner in: turret omega", flagNaN(rs.turretAngularVelocityDegPerSec));
         }
+        loop = Loop.milliseconds();
+        telemetry.addData("loot time(ms)", "%.1f", loop);
+
     }
 
     private void turretDebugControls() {

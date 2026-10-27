@@ -61,6 +61,7 @@ public class DriveBase extends SubSystem {
 
 
 
+
     }
 
 
@@ -72,7 +73,7 @@ public class DriveBase extends SubSystem {
 
     public Command drivePowers(double vertical, double strafe, double turn) {
         this.turn = -turn;
-        this.strafe = -strafe;
+        this.strafe = strafe;
         this.vertical = vertical;
 
         return driveCommand;
@@ -81,7 +82,7 @@ public class DriveBase extends SubSystem {
 
     public Command drivePowers(RobotPower power) {
         this.turn = -power.getPivot();
-        this.strafe = -power.getHorizontal();
+        this.strafe = power.getHorizontal();
         this.vertical = power.getVertical();
 
         return driveCommand;
@@ -94,10 +95,10 @@ public class DriveBase extends SubSystem {
                 long start = System.nanoTime();
                 double denominator = Math.max(1.0, Math.abs(vertical) + Math.abs(strafe) + Math.abs(turn));
 
-                double lfT = ((vertical - strafe - turn) / denominator) * speed;
-                double rfT = ((vertical + strafe + turn) / denominator) * speed;
-                double lbT = ((vertical + strafe - turn) / denominator) * speed;
-                double rbT = ((vertical - strafe + turn) / denominator) * speed;
+                double lfT = ((vertical + strafe + turn) / denominator) * speed;
+                double rfT = ((vertical - strafe - turn) / denominator) * speed;
+                double lbT = ((vertical - strafe + turn) / denominator) * speed;
+                double rbT = ((vertical + strafe - turn) / denominator) * speed;
 
                 double m0, m1, m2, m3;
                 if (!engage) {
