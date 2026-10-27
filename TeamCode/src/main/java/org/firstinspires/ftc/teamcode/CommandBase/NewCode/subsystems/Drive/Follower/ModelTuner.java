@@ -105,18 +105,18 @@ public class ModelTuner {
 
     public double[] gains() {
         // on-path: power must reach breakaway within ~10cm/10deg of error
-        double[] px = pd(aStr,  tsX * PATH_RATIO, 0, stictionFloor(ksStr, 10));
-        double[] py = pd(aFwd,  tsY * PATH_RATIO, 0, stictionFloor(ksFwd, 10));
+        double[] px = pd(aFwd,  tsX * PATH_RATIO, 0, stictionFloor(ksFwd, 10));
+        double[] py = pd(aStr,  tsY * PATH_RATIO, 0, stictionFloor(ksStr, 10));
         // endpoint: floor at 3x tolerance (still converges), cap at 1x
         // tolerance (no stick-slip twitch inside the box)
-        double[] ex = pd(aStr,  tsX, endCap(ksStr, tolX), stictionFloor(ksStr, 3 * tolX));
-        double[] ey = pd(aFwd,  tsY, endCap(ksFwd, tolY), stictionFloor(ksFwd, 3 * tolY));
+        double[] ex = pd(aFwd,  tsX, endCap(ksFwd, tolX), stictionFloor(ksFwd, 3 * tolX));
+        double[] ey = pd(aStr,  tsY, endCap(ksStr, tolY), stictionFloor(ksStr, 3 * tolY));
         // The endpoint loop must NEVER be stiffer than the on-path loop - the
         // follower switches to it near the path end, and a stiffer endpoint
         // gain makes the robot visibly speed up right before the target and
         // overshoot. Cap it, and re-derive Kd so damping stays critical.
-        ex = capToPath(ex, px, aStr);
-        ey = capToPath(ey, py, aFwd);
+        ex = capToPath(ex, px, aFwd);
+        ey = capToPath(ey, py, aStr);
         double[] hf = pd(aTurn, tsH, 0, stictionFloor(ksTurn, 10));
         // Slow heading profile: own pole placement at a longer settling time
         // (not a scaled copy of fast - a scaled Kp with unscaled Kd is no

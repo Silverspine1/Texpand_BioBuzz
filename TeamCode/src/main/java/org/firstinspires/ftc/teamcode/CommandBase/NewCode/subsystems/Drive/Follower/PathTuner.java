@@ -101,7 +101,7 @@ public class PathTuner extends OpModeEX {
     // Only used until the first axis is tuned; after that returns run on the
     // tuned gains. Format: P, D pairs in the order
     //   X on-path, Y on-path, X last-adjust, Y last-adjust, fast heading, slow heading
-    // (robot X = strafe, robot Y = forward)
+    // (field X = robot forward, field Y = robot strafe (at heading 0))
     // Cut for the faster 504 rpm drivetrain: translation /2, heading /3.
     private static final double[] SAFE_GAINS = {
             0.08,    0.004,      0.15,    0.003,      // X on-path, Y on-path
@@ -111,8 +111,8 @@ public class PathTuner extends OpModeEX {
 
     // Used ONLY when a measurement fails (robot didn't move etc).
     // Keep these inside the bounds below.
-    private static final double FALLBACK_XV = 170, FALLBACK_YV = 220;
-    private static final double FALLBACK_XA = 650, FALLBACK_YA = 700;
+    private static final double FALLBACK_XV = 220, FALLBACK_YV = 170;
+    private static final double FALLBACK_XA = 700, FALLBACK_YA = 650;
 
     // ---- sanity bounds on MEASURED speed / accel ----
     // These are FULL-POWER (1.0) equivalents, so they stay valid whatever test
@@ -390,8 +390,8 @@ public class PathTuner extends OpModeEX {
         // tolerance = 1.5x the lurch quantum, floored at odometry noise x4 and
         // CEILINGED - a noisy lurch measurement must not inflate tolerance so
         // far that the endpoint Kp cap (kS/tol) collapses the gains to nothing
-        model.tolX = clamp(1.5 * quantum[Ax.STR.ordinal()], Math.max(2.5, posNoise * 4), 5.0);
-        model.tolY = clamp(1.5 * quantum[Ax.FWD.ordinal()], Math.max(2.5, posNoise * 4), 5.0);
+        model.tolX = clamp(1.5 * quantum[Ax.FWD.ordinal()], Math.max(2.5, posNoise * 4), 5.0);
+        model.tolY = clamp(1.5 * quantum[Ax.STR.ordinal()], Math.max(2.5, posNoise * 4), 5.0);
         model.tolH = clamp(1.5 * quantum[Ax.TURN.ordinal()], Math.max(2.5, hdgNoise * 4), 5.0);
     }
 
@@ -479,10 +479,10 @@ public class PathTuner extends OpModeEX {
         model.aStr  = positiveOr(maxA[Ax.STR.ordinal()],  FALLBACK_XA);
         model.aTurn = positiveOr(maxA[Ax.TURN.ordinal()], 300);
 
-        double xv = positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_XV);
-        double yv = positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_YV);
-        double xa = positiveOr(maxA[Ax.STR.ordinal()], FALLBACK_XA);
-        double ya = positiveOr(maxA[Ax.FWD.ordinal()], FALLBACK_YA);
+        double xv = positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_XV);
+        double yv = positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_YV);
+        double xa = positiveOr(maxA[Ax.FWD.ordinal()], FALLBACK_XA);
+        double ya = positiveOr(maxA[Ax.STR.ordinal()], FALLBACK_YA);
 
         // rebuild path generation + safe follower with real constants
         genConfig = buildConfig(SAFE_GAINS, xv, yv, xa, ya);
@@ -668,10 +668,10 @@ public class PathTuner extends OpModeEX {
         // from here on, drive home with the tuned gains - much faster than
         // the conservative safe set
         safeFollow = new Follower(buildConfig(model.gains(),
-                positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_XV),
-                positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_YV),
-                positiveOr(maxA[Ax.STR.ordinal()], FALLBACK_XA),
-                positiveOr(maxA[Ax.FWD.ordinal()], FALLBACK_YA)));
+                positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_XV),
+                positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_YV),
+                positiveOr(maxA[Ax.FWD.ordinal()], FALLBACK_XA),
+                positiveOr(maxA[Ax.STR.ordinal()], FALLBACK_YA)));
         if (sIdx >= 2) {
             buildTunedFollower();
             saveBest();
@@ -695,10 +695,10 @@ public class PathTuner extends OpModeEX {
     private void buildTunedFollower() {
         tunedGains = model.gains();
         follow = new Follower(buildConfig(tunedGains,
-                positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_XV),
-                positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_YV),
-                positiveOr(maxA[Ax.STR.ordinal()], FALLBACK_XA),
-                positiveOr(maxA[Ax.FWD.ordinal()], FALLBACK_YA)));
+                positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_XV),
+                positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_YV),
+                positiveOr(maxA[Ax.FWD.ordinal()], FALLBACK_XA),
+                positiveOr(maxA[Ax.STR.ordinal()], FALLBACK_YA)));
     }
 
     // ============================= PATH RUN (probe + verify) =============================
@@ -1009,8 +1009,8 @@ public class PathTuner extends OpModeEX {
             telemetry.addLine("gains (as tested): " + fmt(tunedGains));
             if (fullPowerOutput) telemetry.addLine("gains (OUTPUT, full power): " + fmt(outputGains()));
             telemetry.addData("OUTPUT consts maxXV/YV/XA/YA", String.format("%.0f / %.0f / %.0f / %.0f",
-                    outV(Ax.STR.ordinal(), FALLBACK_XV), outV(Ax.FWD.ordinal(), FALLBACK_YV),
-                    outA(Ax.STR.ordinal(), FALLBACK_XA), outA(Ax.FWD.ordinal(), FALLBACK_YA)));
+                    outV(Ax.FWD.ordinal(), FALLBACK_XV), outV(Ax.STR.ordinal(), FALLBACK_YV),
+                    outA(Ax.FWD.ordinal(), FALLBACK_XA), outA(Ax.STR.ordinal(), FALLBACK_YA)));
         }
         for (int i = 0; i < 3; i++) {
             if (!Double.isNaN(firstSettle[i]) && !Double.isNaN(bestSettle[i]))
@@ -1081,10 +1081,10 @@ public class PathTuner extends OpModeEX {
             w.write(String.format("    .setFastHeadingPD(%.5f, %.5f)\n", b[8], b[9]));
             w.write(String.format("    .setSlowHeadingPD(%.5f, %.5f)\n", b[10], b[11]));
             w.write(String.format("    .setRobotConstants(%.0f, %.0f, %.0f, %.0f);\n",
-                    outV(Ax.STR.ordinal(), FALLBACK_XV),
-                    outV(Ax.FWD.ordinal(), FALLBACK_YV),
-                    outA(Ax.STR.ordinal(), FALLBACK_XA),
-                    outA(Ax.FWD.ordinal(), FALLBACK_YA)));
+                    outV(Ax.FWD.ordinal(), FALLBACK_XV),
+                    outV(Ax.STR.ordinal(), FALLBACK_YV),
+                    outA(Ax.FWD.ordinal(), FALLBACK_XA),
+                    outA(Ax.STR.ordinal(), FALLBACK_YA)));
             w.close();
         } catch (IOException ignored) {}
     }
