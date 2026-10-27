@@ -12,8 +12,8 @@ package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Foll
  *                            from a slow power ramp until movement.
  *   tolX / tolY / tolH  - stop tolerances, derived from the stiction position
  *                         quantum (smallest reliable move), not hand-picked.
- *   tsX / tsY / tsH     - settling-time targets, driven down by PathTuner's
- *                         probe search until each axis just meets tolerance.
+ *   ts / zeta / end     - per-axis stiffness, damping and endpoint softness,
+ *                         chosen by PathTuner's cost-minimising search.
  *
  * Gain math - standard pole placement on the near-target 2nd-order loop
  *     error'' + A*Kd*error' + A*Kp*error = 0
@@ -54,33 +54,35 @@ public class ModelTuner {
     public double tolY = 2.0;   // cm
     public double tolH = 2.0;   // deg
 
-    // Settling-time targets, driven by PathTuner's search.
-    public double zeta = 1.0;
-    public double tsX  = 0.70;
-    public double tsY  = 0.70;
-    public double tsH  = 0.60;
+    // Per-axis shape parameters, driven by PathTuner's search.
+    //   ts   - on-path settling time (s); smaller = stiffer
+    //   zeta - damping ratio of the pole placement (1 = critical)
+    //   end  - endpoint settling time as a multiple of ts (bigger = softer hold)
+    public double tsX = 0.55, tsY = 0.55, tsH = 0.60;
+    public double zetaX = 1.0, zetaY = 1.0, zetaH = 1.0;
+    public double endX = 4.0 / 3.0, endY = 4.0 / 3.0;
 
-    // On-path tracking is stiffer than the endpoint hold by this ratio
-    // (tracking has feed-forward help; the endpoint loop is on its own).
-    private static final double PATH_RATIO = 0.75;
+    // Measured control-loop period (s). Saved D gains are only valid at a
+    // similar loop time.
+    public double loopDt = 0.02;
 
     // Hard sanity bounds only - real shaping comes from measurement.
     private static final double KP_MIN = 1e-4, KP_MAX = 1.0;
     private static final double KD_MAX = 0.5;
 
     /**
-     * {Kp, Kd} for one axis. If kpCap > 0 the proportional gain is limited to
-     * it (anti-twitch endpoint cap). Kd is always re-derived from the final
-     * Kp so the pair stays at the requested zeta no matter what clamped.
+     * {Kp, Kd} for one axis (Kd per SECOND). If kpCap > 0 the proportional gain
+     * is limited to it (anti-twitch endpoint cap). Kd is always re-derived from
+     * the final Kp so the pair stays at the requested zeta no matter what clamped.
      */
-    public double[] pd(double A, double ts, double kpCap, double kpFloor) {
+    public double[] pd(double A, double ts, double zeta, double kpCap, double kpFloor) {
         if (A <= 1.0) A = 1.0;                    // degenerate measurement guard
         double wn = 4.0 / (zeta * ts);
         double kp = wn * wn / A;
         if (kpCap > 0 && kp > kpCap) kp = kpCap;
         if (kp < kpFloor) kp = kpFloor;
         kp = clamp(kp, KP_MIN, KP_MAX);
-        // critical damping for the ACTUAL kp: wn' = sqrt(kp*A), kd = 2*zeta*wn'/A
+        // damping for the ACTUAL kp: wn' = sqrt(kp*A), kd = 2*zeta*wn'/A
         double kd = clamp(2.0 * zeta * Math.sqrt(kp / A), 0, KD_MAX);
         return new double[]{kp, kd};
     }
@@ -91,10 +93,6 @@ public class ModelTuner {
         return ks / tol;
     }
 
-    /**
-     * Full 12-gain vector in PathTuner's order:
-     *  0,1 onPathX   2,3 onPathY   4,5 endX   6,7 endY   8,9 hdgFast   10,11 hdgSlow
-     */
     /** Floor so the loop can actually break static friction: at an error of
      *  errScale the commanded power must reach breakaway, or the robot creeps
      *  forever and every probe times out. */
@@ -103,34 +101,37 @@ public class ModelTuner {
         return ks / errScale;
     }
 
+    /**
+     * Full 12-gain vector in PathTuner's order, D in Nexus per-loop units:
+     *  0,1 onPathX   2,3 onPathY   4,5 endX   6,7 endY   8,9 hdgFast   10,11 hdgSlow
+     */
     public double[] gains() {
         // on-path: power must reach breakaway within ~10cm/10deg of error
-        double[] px = pd(aFwd,  tsX * PATH_RATIO, 0, stictionFloor(ksFwd, 10));
-        double[] py = pd(aStr,  tsY * PATH_RATIO, 0, stictionFloor(ksStr, 10));
+        double[] px = pd(aFwd, tsX, zetaX, 0, stictionFloor(ksFwd, 10));
+        double[] py = pd(aStr, tsY, zetaY, 0, stictionFloor(ksStr, 10));
         // endpoint: floor at 3x tolerance (still converges), cap at 1x
         // tolerance (no stick-slip twitch inside the box)
-        double[] ex = pd(aFwd,  tsX, endCap(ksFwd, tolX), stictionFloor(ksFwd, 3 * tolX));
-        double[] ey = pd(aStr,  tsY, endCap(ksStr, tolY), stictionFloor(ksStr, 3 * tolY));
+        double[] ex = pd(aFwd, tsX * endX, zetaX, endCap(ksFwd, tolX), stictionFloor(ksFwd, 3 * tolX));
+        double[] ey = pd(aStr, tsY * endY, zetaY, endCap(ksStr, tolY), stictionFloor(ksStr, 3 * tolY));
         // The endpoint loop must NEVER be stiffer than the on-path loop - the
         // follower switches to it near the path end, and a stiffer endpoint
-        // gain makes the robot visibly speed up right before the target and
-        // overshoot. Cap it, and re-derive Kd so damping stays critical.
-        ex = capToPath(ex, px, aFwd);
-        ey = capToPath(ey, py, aStr);
-        double[] hf = pd(aTurn, tsH, 0, stictionFloor(ksTurn, 10));
-        // Slow heading profile: own pole placement at a longer settling time
-        // (not a scaled copy of fast - a scaled Kp with unscaled Kd is no
-        // longer critically damped and steps torque at the profile switch).
-        double[] hs = pd(aTurn, tsH * 1.5, endCap(ksTurn, tolH), stictionFloor(ksTurn, 3 * tolH));
+        // gain makes the robot visibly speed up right before the target.
+        ex = capToPath(ex, px, aFwd, zetaX);
+        ey = capToPath(ey, py, aStr, zetaY);
+        double[] hf = pd(aTurn, tsH, zetaH, 0, stictionFloor(ksTurn, 10));
+        double[] hs = pd(aTurn, tsH * 1.5, zetaH, endCap(ksTurn, tolH), stictionFloor(ksTurn, 3 * tolH));
 
+        // Nexus PIDs take D as kd * (error - previousError) PER LOOP, not per
+        // second, so the time-based Kd is divided by the loop period.
+        double k = 1.0 / Math.max(0.005, loopDt);
         return new double[]{
-                px[0], px[1], py[0], py[1],
-                ex[0], ex[1], ey[0], ey[1],
-                hf[0], hf[1], hs[0], hs[1]
+                px[0], px[1] * k, py[0], py[1] * k,
+                ex[0], ex[1] * k, ey[0], ey[1] * k,
+                hf[0], hf[1] * k, hs[0], hs[1] * k
         };
     }
 
-    private double[] capToPath(double[] end, double[] path, double A) {
+    private double[] capToPath(double[] end, double[] path, double A, double zeta) {
         if (end[0] <= path[0]) return end;
         if (A <= 1.0) A = 1.0;
         double kp = path[0];

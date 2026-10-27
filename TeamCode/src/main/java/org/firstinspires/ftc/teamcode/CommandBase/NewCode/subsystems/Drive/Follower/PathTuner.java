@@ -9,6 +9,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 
 import dev.weaponboy.nexus_pathing.Follower.Follower;
+import dev.weaponboy.nexus_pathing.Follower.FollowerPrimer;
 import dev.weaponboy.nexus_pathing.PathGeneration.PathsManager;
 import dev.weaponboy.nexus_pathing.PathGeneration.commands.SectionBuilder;
 import dev.weaponboy.nexus_pathing.PathingUtility.RobotPower;
@@ -30,13 +31,17 @@ import dev.weaponboy.nexus_pathing.RobotUtilities.Vector2D;
  *   3. MAX V/A   - per axis, full power until velocity plateaus. Max velocity
  *                  from the plateau; accel-per-power from a LEAST-SQUARES fit
  *                  of the whole ramp (no single-sample derivatives -> no
- *                  noise-spike gains). Braking is a non-blocking state.
+ *                  noise-spike gains). Then 0 power (BRAKE) - the bare motors
+ *                  are never plug-reversed - and the passive brake decel is
+ *                  measured. Path accel/decel is capped to what braking alone
+ *                  can do, so the follower never needs reverse power to stop.
  *                  Measured values are checked against the MIN/MAX speed and
  *                  accel bounds below (clamped if outside).
- *   4. SEARCH    - per axis, shrink the settling target ts while probe runs
- *                  pass. On the first fail, back off with margin (last pass
- *                  x1.2) and CONFIRM with a fresh run before locking - gains
- *                  land safely inside the stable region, not on its edge.
+ *   4. SEARCH    - per axis, golden-section search on ln(ts) minimising a
+ *                  run cost: time into a 5 cm / 5 deg zone, extra time to
+ *                  settle in the fine tolerance, overshoot, and direction
+ *                  reversals / zone exits (twitch) during a hold watch after
+ *                  settling. 6 runs + 1 confirm per axis.
  *   5. VERIFY    - battery of paths with the locked gains, logged to CSV.
  *
  * Gains come from pole placement at zeta=1 (see ModelTuner) - Kd is always
@@ -65,24 +70,43 @@ public class PathTuner extends OpModeEX {
     private static final double RAMP_MAX_POWER  = 0.8;   // give up above this
     private static final double LURCH_TIME      = 0.35;  // s to watch post-breakaway drift
     private static final double MAXVA_MAX_TIME  = 1;   // s full-power cap
-    private static final double MAXVA_MARGIN    = 40;    // cm inner box for full-power runs
+    private static final double BRAKE_GUESS     = 400;   // cm/s^2 assumed brake decel before it is measured
     private static final int    PLATEAU_N       = 5;
     private static final double PLATEAU_TOL     = 0.04;
-    private static final double BRAKE_POWER     = 0.5;
-    private static final double BRAKE_MAX_TIME  = 0.5;   // s
+    private static final double BRAKE_MAX_TIME  = 1.5;   // s
+    private static final double PROFILE_MARGIN  = 0.85;  // path accel/decel = this x what braking alone achieves
     private static final double SETTLE_TIMEOUT  = 3.5;   // s per probe run
+    private static final double HOLD_WATCH      = 0.8;   // s watched after settling, to catch endpoint twitch
     private static final double RETURN_TIMEOUT  = 6.0;   // s per return attempt
     private static final int    RETURN_RETRIES  = 3;     // rebuild+retry if not home
     private static final double HOME_OK_DIST    = 30;    // cm - close enough to start a path
     private static final int    SETTLE_N        = 5;     // consecutive in-zone+stopped samples
     private static final int    OVERSHOOT_N     = 4;     // consecutive past-tol samples = real
-    private static final double TS_START_T      = 0.90;  // conservative search starts
-    private static final double TS_START_H      = 0.70;
-    private static final double TS_FLOOR        = 0.12;
-    private static final double TS_DOWN         = 0.75;  // shrink on pass
-    private static final double LOCK_MARGIN     = 1.20;  // back off from edge before locking
-    private static final int    MAX_ITER        = 16;
     private static final double SAMPLE_DT_MIN   = 0.02;
+
+    // ---- run cost: integral of a soft error penalty over a fixed window ----
+    //   f(e) = 1 - exp(-(e / BALANCE)^2)
+    // ~1 per second while far away, ~0.6 at BALANCE, ~0.2 at half of it, ~0
+    // when spot on. Getting into the area fast dominates the score; finishing
+    // precisely still earns a little; overshoot, hunting and endpoint twitch
+    // all show up as error, so no hard tolerance line decides anything.
+    // Smaller BALANCE = values a precise final settle more.
+    private static final double BALANCE_T = 5.0, BALANCE_H = 5.0;   // cm, deg
+    private static final double COST_HORIZON = 4.4;              // s - same window for every run
+    private static final double W_TWITCH = 0.08;                 // s per direction reversal once in the area
+    private static final double COST_LEFT_BOX = 20;
+
+    // ---- search per axis: stiffness (golden section), then damping and
+    //      endpoint softness (2 tries + parabola vertex each), then confirm ----
+    private static final double TS_LO_T = 0.18, TS_HI_T = 1.2;
+    private static final double TS_LO_H = 0.20, TS_HI_H = 1.4;
+    private static final int    GS_EVALS = 5;
+    private static final double GOLD = 0.6180339887;
+    private static final double[] ZETA_TRY = {0.7, 1.35};
+    private static final double ZETA_LO = 0.55, ZETA_HI = 1.6;
+    private static final double[] END_TRY = {0.9, 2.0};
+    private static final double END_LO = 0.75, END_HI = 2.6;
+    private static final double END_DEFAULT = 4.0 / 3.0;
     private static final int    MAX_SAMPLES     = 256;
 
     // field / safety
@@ -141,6 +165,12 @@ public class PathTuner extends OpModeEX {
     private final boolean[] plateauOk = new boolean[3];
     private final boolean[] vClamped = new boolean[3];  // measurement hit a speed bound
     private final boolean[] aClamped = new boolean[3];  // measurement hit an accel bound
+    private final double[] brakeDecel = new double[3];  // 0-power (BRAKE) decel, cm/s^2 or deg/s^2
+    private final java.util.ArrayList<double[]> brakeSamples = new java.util.ArrayList<>();
+
+    // control loop period, EMA (s)
+    private double loopDt = 0.02;
+    private long lastLoopNanos = 0;
 
     // ---- axes ----
     private enum Ax { FWD, STR, TURN }                   // FWD=robot Y, STR=robot X
@@ -172,15 +202,26 @@ public class PathTuner extends OpModeEX {
     private double lurchRefX, lurchRefY, lurchRefH;
 
     // search state
-    private int sIdx = 0;                    // 0=X(STR), 1=Y(FWD), 2=H(TURN)
-    private double curTs, lastPassTs;
-    private boolean anyPass, confirming;
-    private int confirmTries = 0;
+    private int sIdx = 0;                    // 0=X(forward), 1=Y(strafe), 2=H(turn)
+    private double curTs, curZeta, curEnd;
     private int sIter;
     private boolean searching = false;
+    private boolean nextAxisAfterReturn = false;
     private final double[] lockedTs = { Double.NaN, Double.NaN, Double.NaN };
-    private final double[] firstSettle = { Double.NaN, Double.NaN, Double.NaN };
-    private final double[] bestSettle  = { Double.NaN, Double.NaN, Double.NaN };
+    private final double[] bestCost = { Double.NaN, Double.NaN, Double.NaN };
+    private enum Stage { TS, ZETA, END, CONFIRM }
+    private Stage stage;
+    // golden section bracket in u = ln(ts); c < d are the interior points
+    private double gsA, gsB, gsC, gsD, gsFc, gsFd;
+    private boolean gsPendingC;
+    // ZETA / END stages: queued tries, then one parabola-vertex try
+    private final java.util.ArrayDeque<double[]> tryQueue = new java.util.ArrayDeque<>();
+    private double[] stageBase;
+    private boolean vertexTried;
+    private final java.util.ArrayList<double[]> evals = new java.util.ArrayList<>(); // {ts, zeta, end, cost}
+    private double lastCost = Double.NaN;
+    // running cost of the current run
+    private double costInt, costLastT, costLastF;
 
     // active path run
     private static class Item {
@@ -209,6 +250,11 @@ public class PathTuner extends OpModeEX {
     private double settleEnterT = 0;
     private int overshootStreak = 0;
     private boolean sustainedOvershoot = false;
+    // cost metrics for the probed axis
+    private double tCoarse;
+    private double settledAt;
+    private boolean wasInZone;
+    private int fineExits, reversals, lastVelSign;
 
     private final com.qualcomm.robotcore.util.ElapsedTime phaseTimer =
             new com.qualcomm.robotcore.util.ElapsedTime();
@@ -240,6 +286,13 @@ public class PathTuner extends OpModeEX {
         boolean stop  = currentGamepad1.b && !lastGamepad1.b;
         boolean skip  = currentGamepad1.x && !lastGamepad1.x;
         boolean toggleMode = currentGamepad1.y && !lastGamepad1.y;
+
+        long now = System.nanoTime();
+        if (lastLoopNanos != 0) {
+            double dt = (now - lastLoopNanos) / 1e9;
+            if (dt > 0.002 && dt < 0.2) loopDt += 0.05 * (dt - loopDt);
+        }
+        lastLoopNanos = now;
 
         if (toggleMode) {
             fullPowerOutput = !fullPowerOutput;
@@ -285,7 +338,14 @@ public class PathTuner extends OpModeEX {
                 break;
             case SEARCH_PROBE: runPath(skip);       break;
             case SEARCH_RETURN:
-                if (returnHome()) searchDecision();
+                if (returnHome()) {
+                    if (nextAxisAfterReturn) {
+                        nextAxisAfterReturn = false;
+                        beginSearchAxis(sIdx + 1);
+                    } else {
+                        searchDecision();
+                    }
+                }
                 break;
             case VERIFY_RUN:   runPath(skip);       break;
             case VERIFY_RETURN:
@@ -408,7 +468,13 @@ public class PathTuner extends OpModeEX {
 
     private void runMaxVaPush(boolean skip) {
         double t = phaseTimer.seconds();
-        boolean boxHit = outsideBox(Math.min(MAXVA_MARGIN, areaSize * 0.16));
+        // stop pushing while there is still room to stop on BRAKE alone
+        boolean boxHit = false;
+        if (Ax.values()[axIdx] != Ax.TURN) {
+            double v = Math.hypot(odometry.getXVelocity(), odometry.getYVelocity());
+            double decel = brakeDecel[axIdx] > 1 ? brakeDecel[axIdx] : BRAKE_GUESS;
+            boxHit = outsideBox(Math.min(areaSize / 2 - 5, v * v / (2 * decel) + 8));
+        }
         boolean timeUp = t >= MAXVA_MAX_TIME;
 
         if (boxHit || timeUp || skip) { finishMaxVaRun(false); return; }
@@ -435,6 +501,8 @@ public class PathTuner extends OpModeEX {
         for (double[] s : samples) if (s[1] > vBest) vBest = s[1];
         maxV[axIdx] = vBest;
         maxA[axIdx] = rampSlope(vBest) / maxPower;   // least-squares, normalised to per unit power
+        brakeSamples.clear();
+        lastSampleT = 0;
         phaseTimer.reset();
         state = State.MAXVA_BRAKE;
     }
@@ -442,9 +510,12 @@ public class PathTuner extends OpModeEX {
     /** Least-squares slope of v(t) over the ramp portion (10%..70% of peak).
      *  Immune to single-sample odometry noise, unlike a peak dV/dt. */
     private double rampSlope(double vPeak) {
-        double lo = 0.10 * vPeak, hi = 0.70 * vPeak;
+        return slope(samples, 0.10 * vPeak, 0.70 * vPeak);
+    }
+
+    private static double slope(java.util.List<double[]> pts, double lo, double hi) {
         double n = 0, st = 0, sv = 0, stt = 0, stv = 0;
-        for (double[] s : samples) {
+        for (double[] s : pts) {
             if (s[1] < lo || s[1] > hi) continue;
             n++; st += s[0]; sv += s[1]; stt += s[0] * s[0]; stv += s[0] * s[1];
         }
@@ -454,20 +525,42 @@ public class PathTuner extends OpModeEX {
         return (n * stv - st * sv) / denom;        // cm/s^2 (or deg/s^2) at power 1.0
     }
 
-    /** Non-blocking reverse-power brake until actually stopped. */
+    /** 0 power (motors in BRAKE) until stopped - never plug-reverse the bare
+     *  motors. The decel measured here is what the path profile may demand. */
     private void runMaxVaBrake() {
+        stopDrive();
+        double t = phaseTimer.seconds();
         double v = (Ax.values()[axIdx] == Ax.TURN)
                 ? Math.abs(degPerSec())
                 : Math.hypot(odometry.getXVelocity(), odometry.getYVelocity());
         double eps = (Ax.values()[axIdx] == Ax.TURN) ? stopEpsH : stopEpsT;
-        if (v < eps || phaseTimer.seconds() > BRAKE_MAX_TIME) {
-            stopDrive();
+        if (t - lastSampleT >= SAMPLE_DT_MIN && brakeSamples.size() < MAX_SAMPLES) {
+            brakeSamples.add(new double[]{t, v});
+            lastSampleT = t;
+        }
+        if (v < eps || t > BRAKE_MAX_TIME) {
+            double v0 = 0;
+            for (double[] s : brakeSamples) if (s[1] > v0) v0 = s[1];
+            brakeDecel[axIdx] = -slope(brakeSamples, 0.15 * v0, 0.85 * v0);
             buildReturnPath();
             state = State.MAXVA_RETURN;
             phaseTimer.reset();
-        } else {
-            applyAxisPower(Ax.values()[axIdx], -Math.min(BRAKE_POWER, maxPower));
         }
+    }
+
+    /** Accel/decel the path profile may use: what the drive can do at the test
+     *  power AND what BRAKE alone can stop, whichever is smaller, with margin.
+     *  The profile uses one value for both, so decel never needs plugging. */
+    private double profileAccel(boolean fullPower) {
+        double m = Double.MAX_VALUE;
+        for (Ax a : new Ax[]{Ax.FWD, Ax.STR}) {
+            int i = a.ordinal();
+            double drive = maxA[i] > 1 ? maxA[i] * (fullPower ? fullScale(i) : 1) * maxPower : Double.MAX_VALUE;
+            double brake = brakeDecel[i] > 1 ? brakeDecel[i] : Double.MAX_VALUE;
+            m = Math.min(m, Math.min(drive, brake));
+        }
+        if (m == Double.MAX_VALUE) m = Math.min(FALLBACK_XA, FALLBACK_YA);
+        return m * PROFILE_MARGIN;
     }
 
     private void finishMaxVa() {
@@ -481,13 +574,17 @@ public class PathTuner extends OpModeEX {
 
         double xv = positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_XV);
         double yv = positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_YV);
-        double xa = positiveOr(maxA[Ax.FWD.ordinal()], FALLBACK_XA);
-        double ya = positiveOr(maxA[Ax.STR.ordinal()], FALLBACK_YA);
+        double acc = profileAccel(false);
 
         // rebuild path generation + safe follower with real constants
-        genConfig = buildConfig(SAFE_GAINS, xv, yv, xa, ya);
+        genConfig = buildConfig(SAFE_GAINS, xv, yv, acc, acc);
         paths = new PathsManager(genConfig);
         safeFollow = new Follower(genConfig);
+
+        // let the plug limiter estimate wheel speed from real full-power speeds
+        if (maxV[Ax.FWD.ordinal()] > 1)  driveBase.fullSpeedFwd  = maxV[Ax.FWD.ordinal()]  * fullScale(Ax.FWD.ordinal());
+        if (maxV[Ax.STR.ordinal()] > 1)  driveBase.fullSpeedStr  = maxV[Ax.STR.ordinal()]  * fullScale(Ax.STR.ordinal());
+        if (maxV[Ax.TURN.ordinal()] > 1) driveBase.fullSpeedTurn = maxV[Ax.TURN.ordinal()] * fullScale(Ax.TURN.ordinal());
     }
 
     /** Clamp measured max speed / accel into [MIN, MAX]. The bounds are
@@ -541,12 +638,6 @@ public class PathTuner extends OpModeEX {
         return (fullPowerOutput && maxV[idx] > 1) ? v * fullScale(idx) : v;
     }
 
-    /** Accel to OUTPUT for an axis (full-power scaled when that mode is on). */
-    private double outA(int idx, double fallback) {
-        double a = positiveOr(maxA[idx], fallback);
-        return (fullPowerOutput && maxA[idx] > 1) ? a * maxPower * fullScale(idx) : a;
-    }
-
     /** Gains to OUTPUT. In full-power mode the model is re-run with the
      *  full-power accel-per-power (everything else - kS, tolerances, locked
      *  ts - stays as tuned), then the model is restored. */
@@ -564,18 +655,26 @@ public class PathTuner extends OpModeEX {
     }
 
     // ============================= 4. SEARCH =============================
+    /** Per axis, minimising run cost:
+     *   TS      - golden section on ln(ts) (stiffness), zeta 1, default endpoint
+     *   ZETA    - two damping tries around the best, then the parabola vertex
+     *   END     - same for endpoint softness (translation only)
+     *   CONFIRM - rerun the best; if it was a fluke, take the runner-up
+     *  Each run starts where the last ended (ping-pong), so no drive home. */
     private void beginSearchAxis(int i) {
         sIdx = i;
-        curTs = (sIdx == 2) ? TS_START_H : TS_START_T;
-        lastPassTs = Double.NaN;
-        anyPass = false;
-        confirming = false;
         sIter = 0;
         searching = true;
-        applyTs(curTs);
-        buildTunedFollower();
-        beginPath(PROBE[sIdx]);
-        state = State.SEARCH_PROBE;
+        evals.clear();
+        stage = Stage.TS;
+        gsA = Math.log(sIdx == 2 ? TS_LO_H : TS_LO_T);
+        gsB = Math.log(sIdx == 2 ? TS_HI_H : TS_HI_T);
+        gsC = gsB - GOLD * (gsB - gsA);
+        gsD = gsA + GOLD * (gsB - gsA);
+        gsFc = Double.NaN;
+        gsFd = Double.NaN;
+        gsPendingC = true;
+        runProbeAt(Math.exp(gsC), 1.0, END_DEFAULT);
     }
 
     private int invalidRuns = 0;
@@ -583,122 +682,202 @@ public class PathTuner extends OpModeEX {
 
     private void searchDecision() {
         // started outside the box - position problem, not a gains verdict;
-        // rerun the SAME ts without spending an iteration (bounded)
+        // rerun the SAME params without spending an evaluation (bounded)
         if (invalidRun && invalidRuns < 3) {
             invalidRuns++;
-            runProbeAt(curTs);
+            runProbeAt(curTs, curZeta, curEnd);
             return;
         }
         invalidRuns = 0;
 
-        double err = (sIdx == 0) ? tr.finalErrX : (sIdx == 1) ? tr.finalErrY : tr.finalHdgErr;
-        double tol = axisTol(sIdx);
-        boolean pass = !tr.timedOut && !tr.leftBox && err <= tol && !sustainedOvershoot;
-        // DIRECTION of the failure matters:
-        //   too WEAK  (timed out / never reached tolerance, no overshoot)
-        //       -> ts must go DOWN (stronger gains)
-        //   too STRONG (overshoot / left the box)
-        //       -> ts must go UP (weaker gains)
-        // The old logic treated every fail as "too strong", so a weak start
-        // spiralled weaker each iteration and the robot just crept in place.
-        boolean tooStrong = tr.leftBox || sustainedOvershoot;
-
-        if (sIter == 0) firstSettle[sIdx] = tr.settleTime;
+        double cost = runCost();
+        lastCost = cost;
         sIter++;
 
-        if (confirming) {
-            if (pass) { lockAxis(curTs); return; }
-            confirmTries++;
-            // Don't ping-pong between "too weak" and "too strong" forever -
-            // after two failed confirms just lock the last pass with margin.
-            if (confirmTries >= 2 || sIter >= MAX_ITER) {
-                lockAxis(anyPass ? lastPassTs * LOCK_MARGIN : clampTs(curTs));
-                return;
+        if (stage == Stage.CONFIRM) {
+            double[] best = bestEval(null);
+            if (cost > best[3] * 1.4 + 0.3 && evals.size() > 1) {
+                double[] second = bestEval(best);
+                bestCost[sIdx] = second[3];
+                lockAxis(second);
+            } else {
+                bestCost[sIdx] = Math.max(best[3], cost);
+                lockAxis(best);
             }
-            curTs = tooStrong ? curTs * LOCK_MARGIN : curTs * TS_DOWN;
-            runProbeAt(clampTs(curTs));
             return;
         }
 
-        if (pass) {
-            lastPassTs = curTs;
-            anyPass = true;
-            bestSettle[sIdx] = tr.settleTime;
-            curTs *= TS_DOWN;
-            if (curTs < TS_FLOOR || sIter >= MAX_ITER) {
-                // hit the floor while still passing - confirm at margin and lock
-                confirming = true;
-                confirmTries = 0;
-                curTs = Math.max(TS_FLOOR, lastPassTs) * LOCK_MARGIN;
-                runProbeAt(curTs);
+        evals.add(new double[]{curTs, curZeta, curEnd, cost});
+
+        if (stage == Stage.TS) {
+            if (gsPendingC) gsFc = cost; else gsFd = cost;
+            if (Double.isNaN(gsFd)) {
+                gsPendingC = false;
+                runProbeAt(Math.exp(gsD), 1.0, END_DEFAULT);
                 return;
             }
-            runProbeAt(curTs);
-        } else if (anyPass) {
-            // first fail after passes: back off with margin, then CONFIRM
-            confirming = true;
-            confirmTries = 0;
-            curTs = lastPassTs * LOCK_MARGIN;
-            runProbeAt(curTs);
-        } else {
-            // never passed yet - move in the direction the failure demands
-            curTs = tooStrong ? curTs / TS_DOWN : curTs * TS_DOWN;
-            if (sIter >= MAX_ITER || curTs > 2.5 || curTs < TS_FLOOR) {
-                lockAxis(clampTs(curTs));
+            if (evals.size() >= GS_EVALS) {
+                startTweakStage(Stage.ZETA);
                 return;
             }
-            runProbeAt(curTs);
+            if (gsFc < gsFd) {
+                gsB = gsD; gsD = gsC; gsFd = gsFc;
+                gsC = gsB - GOLD * (gsB - gsA);
+                gsPendingC = true;
+                runProbeAt(Math.exp(gsC), 1.0, END_DEFAULT);
+            } else {
+                gsA = gsC; gsC = gsD; gsFc = gsFd;
+                gsD = gsA + GOLD * (gsB - gsA);
+                gsPendingC = false;
+                runProbeAt(Math.exp(gsD), 1.0, END_DEFAULT);
+            }
+            return;
+        }
+
+        // ZETA / END
+        if (!tryQueue.isEmpty()) {
+            double[] p = tryQueue.poll();
+            runProbeAt(p[0], p[1], p[2]);
+            return;
+        }
+        if (!vertexTried) {
+            vertexTried = true;
+            double[] v = vertexCandidate();
+            if (v != null) {
+                runProbeAt(v[0], v[1], v[2]);
+                return;
+            }
+        }
+        if (stage == Stage.ZETA && sIdx < 2) startTweakStage(Stage.END);
+        else {
+            stage = Stage.CONFIRM;
+            double[] b = bestEval(null);
+            runProbeAt(b[0], b[1], b[2]);
         }
     }
 
-    private static double clampTs(double ts) {
-        return ts < TS_FLOOR ? TS_FLOOR : (ts > 2.5 ? 2.5 : ts);
+    /** Two tries either side of the current best along one parameter. */
+    private void startTweakStage(Stage s) {
+        stage = s;
+        stageBase = bestEval(null);
+        vertexTried = false;
+        tryQueue.clear();
+        double[] tries = (s == Stage.ZETA) ? ZETA_TRY : END_TRY;
+        for (double x : tries) {
+            double[] p = stageBase.clone();
+            if (s == Stage.ZETA) p[1] = x; else p[2] = x;
+            tryQueue.add(p);
+        }
+        double[] p = tryQueue.poll();
+        runProbeAt(p[0], p[1], p[2]);
     }
 
-    private void runProbeAt(double ts) {
-        applyTs(ts);
+    /** Vertex of the parabola through the stage's three points (base + 2 tries),
+     *  or null if the fit is not a valley or lands on a point already tried. */
+    private double[] vertexCandidate() {
+        boolean z = stage == Stage.ZETA;
+        int k = z ? 1 : 2;
+        java.util.ArrayList<double[]> pts = new java.util.ArrayList<>();
+        for (double[] e : evals) {
+            if (e[0] != stageBase[0]) continue;
+            if (z ? e[2] != stageBase[2] : e[1] != stageBase[1]) continue;
+            pts.add(e);
+        }
+        if (pts.size() < 3) return null;
+        double[] p1 = pts.get(pts.size() - 3), p2 = pts.get(pts.size() - 2), p3 = pts.get(pts.size() - 1);
+        double x1 = px(p1[k], z), x2 = px(p2[k], z), x3 = px(p3[k], z);
+        double y1 = p1[3], y2 = p2[3], y3 = p3[3];
+        double den = (x1 - x2) * (x1 - x3) * (x2 - x3);
+        if (Math.abs(den) < 1e-9) return null;
+        double a = (x3 * (y2 - y1) + x2 * (y1 - y3) + x1 * (y3 - y2)) / den;
+        double b = (x3 * x3 * (y1 - y2) + x2 * x2 * (y3 - y1) + x1 * x1 * (y2 - y3)) / den;
+        if (a <= 0) return null;
+        double xv = -b / (2 * a);
+        double lo = z ? ZETA_LO : Math.log(END_LO), hi = z ? ZETA_HI : Math.log(END_HI);
+        xv = clamp(xv, lo, hi);
+        double minGap = 0.08;
+        if (Math.abs(xv - x1) < minGap || Math.abs(xv - x2) < minGap || Math.abs(xv - x3) < minGap) return null;
+        double[] c = stageBase.clone();
+        c[k] = z ? xv : Math.exp(xv);
+        return c;
+    }
+
+    /** Search coordinate: zeta directly, endpoint ratio in log space. */
+    private static double px(double v, boolean zeta) { return zeta ? v : Math.log(v); }
+
+    /** Lowest-cost evaluation, skipping {@code exclude}. */
+    private double[] bestEval(double[] exclude) {
+        double[] best = null;
+        for (double[] e : evals) {
+            if (e == exclude) continue;
+            if (best == null || e[3] < best[3]) best = e;
+        }
+        return best;
+    }
+
+    /** Lower is better: integral of the soft error penalty over COST_HORIZON
+     *  (the error at the end of the run is assumed to persist to the end of the
+     *  window), plus a small charge per direction reversal once in the area. */
+    private double runCost() {
+        if (tr.leftBox) return COST_LEFT_BOX;
+        return costInt + costLastF * Math.max(0, COST_HORIZON - costLastT) + W_TWITCH * reversals;
+    }
+
+    private double penalty(double err) {
+        double r = err / (probeIsHeading() ? BALANCE_H : BALANCE_T);
+        return 1 - Math.exp(-r * r);
+    }
+
+    private void runProbeAt(double ts, double zeta, double end) {
+        curTs = ts;
+        curZeta = zeta;
+        curEnd = end;
+        applyParams(ts, zeta, end);
         buildTunedFollower();
         beginPath(PROBE[sIdx]);
         state = State.SEARCH_PROBE;
     }
 
-    private void lockAxis(double ts) {
-        lockedTs[sIdx] = ts;
-        applyTs(ts);
+    private void lockAxis(double[] e) {
+        lockedTs[sIdx] = e[0];
+        applyParams(e[0], e[1], e[2]);
+        model.loopDt = loopDt;
         // from here on, drive home with the tuned gains - much faster than
         // the conservative safe set
         safeFollow = new Follower(buildConfig(model.gains(),
                 positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_XV),
                 positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_YV),
-                positiveOr(maxA[Ax.FWD.ordinal()], FALLBACK_XA),
-                positiveOr(maxA[Ax.STR.ordinal()], FALLBACK_YA)));
+                profileAccel(false), profileAccel(false)));
+        buildTunedFollower();
+        saveBest();
+        // re-centre before the next axis / the verify battery
+        buildReturnPath();
+        phaseTimer.reset();
         if (sIdx >= 2) {
-            buildTunedFollower();
-            saveBest();
             searching = false;
-            batteryIdx = 0;
-            beginPath(BATTERY[0]);
-            state = State.VERIFY_RUN;
+            batteryIdx = -1;
+            state = State.VERIFY_RETURN;
         } else {
-            beginSearchAxis(sIdx + 1);
+            nextAxisAfterReturn = true;
+            state = State.SEARCH_RETURN;
         }
     }
 
-    private void applyTs(double ts) {
-        if (sIdx == 0) model.tsX = ts;
-        else if (sIdx == 1) model.tsY = ts;
-        else model.tsH = ts;
+    private void applyParams(double ts, double zeta, double end) {
+        if (sIdx == 0) { model.tsX = ts; model.zetaX = zeta; model.endX = end; }
+        else if (sIdx == 1) { model.tsY = ts; model.zetaY = zeta; model.endY = end; }
+        else { model.tsH = ts; model.zetaH = zeta; }
     }
 
     private double axisTol(int i) { return i == 0 ? model.tolX : i == 1 ? model.tolY : model.tolH; }
 
     private void buildTunedFollower() {
+        model.loopDt = loopDt;
         tunedGains = model.gains();
         follow = new Follower(buildConfig(tunedGains,
                 positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_XV),
                 positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_YV),
-                positiveOr(maxA[Ax.FWD.ordinal()], FALLBACK_XA),
-                positiveOr(maxA[Ax.STR.ordinal()], FALLBACK_YA)));
+                profileAccel(false), profileAccel(false)));
     }
 
     // ============================= PATH RUN (probe + verify) =============================
@@ -724,8 +903,11 @@ public class PathTuner extends OpModeEX {
         double len = Math.hypot(last[0], last[1]);
         dirX = len > 0 ? last[0] / len : 0;
         dirY = len > 0 ? last[1] / len : 0;
-        targetHeading = wrap360(startHeading + it.hdgDelta);
-        hdgDeltaSign = Math.signum(it.hdgDelta);
+        // turn back toward 0 when already turned, so chained turn probes ping-pong
+        double hd = it.hdgDelta;
+        if (hd != 0 && wrap180(startHeading) > 1) hd = -Math.abs(hd);
+        targetHeading = wrap360(startHeading + hd);
+        hdgDeltaSign = Math.signum(hd);
 
         final Vector2D[] pts = new Vector2D[rel.length + 1];
         pts[0] = new Vector2D(cx, cy);
@@ -739,6 +921,7 @@ public class PathTuner extends OpModeEX {
         follow.setPath(paths.returnPath("outPath"));
         follow.usePathHeadings(false);
         follow.holdPositionAtPathEnd(true);
+        FollowerPrimer.primeHeading(follow, targetHeading, odometry.Heading());
 
         tr = new TrialResult();
         tr.settleTime = SETTLE_TIMEOUT;
@@ -746,7 +929,58 @@ public class PathTuner extends OpModeEX {
         settleStreak = 0;
         overshootStreak = 0;
         sustainedOvershoot = false;
+        tCoarse = Double.NaN;
+        settledAt = Double.NaN;
+        wasInZone = false;
+        fineExits = 0;
+        reversals = 0;
+        lastVelSign = 0;
+        costInt = 0;
+        costLastT = 0;
+        costLastF = penalty(probeErr());
         phaseTimer.reset();
+    }
+
+    /** Error on the axis being judged (probed axis while searching, distance to end while verifying). */
+    private double probeErr() {
+        if (searching) {
+            if (sIdx == 0) return Math.abs(odometry.X() - targetX);
+            if (sIdx == 1) return Math.abs(odometry.Y() - targetY);
+            return Math.abs(wrap180(targetHeading - odometry.Heading()));
+        }
+        return Math.hypot(odometry.X() - targetX, odometry.Y() - targetY);
+    }
+
+    private boolean probeIsHeading() { return searching && sIdx == 2; }
+
+    private double probeVel() {
+        if (searching) {
+            if (sIdx == 0) return odometry.getXVelocity();
+            if (sIdx == 1) return odometry.getYVelocity();
+            return degPerSec();
+        }
+        return odometry.getXVelocity() * dirX + odometry.getYVelocity() * dirY;
+    }
+
+    private double balance() { return probeIsHeading() ? BALANCE_H : BALANCE_T; }
+
+    /** Integrates the error penalty, and counts direction reversals once in the
+     *  area (overshoot / hunting / twitch). */
+    private void trackCost(double t) {
+        boolean hdg = probeIsHeading();
+        double err = probeErr();
+        double f = penalty(err);
+        costInt += 0.5 * (f + costLastF) * (t - costLastT);
+        costLastT = t;
+        costLastF = f;
+        if (Double.isNaN(tCoarse) && err <= balance()) tCoarse = t;
+        double v = probeVel();
+        double thr = hdg ? stopEpsH * 2 : stopEpsT * 2;
+        int sgn = Math.abs(v) > thr ? (v > 0 ? 1 : -1) : 0;
+        if (sgn != 0) {
+            if (!Double.isNaN(tCoarse) && lastVelSign != 0 && sgn != lastVelSign) reversals++;
+            lastVelSign = sgn;
+        }
     }
 
     private void runPath(boolean skip) {
@@ -760,12 +994,13 @@ public class PathTuner extends OpModeEX {
 
         drive(follow, targetHeading);
         sampleMetrics();
+        double t = phaseTimer.seconds();
+        trackCost(t);
 
-        // settled = inside the tolerance box AND slow, held for SETTLE_N
-        // consecutive samples. During a probe only the PROBED axis is judged
-        // at full tolerance - the other axes just need to be roughly sane
-        // (3x tol). Demanding all three at full tolerance failed good runs on
-        // cross-axis noise and drove the search toward mush gains.
+        // While searching, a run ends once the robot is in the area and slow -
+        // whether it then reaches a perfect settle is priced by the cost
+        // integral, not by a hard tolerance. Verify runs still demand the
+        // fine tolerance on every axis.
         double aX = Math.abs(odometry.X() - targetX);
         double aY = Math.abs(odometry.Y() - targetY);
         double aH = Math.abs(wrap180(targetHeading - odometry.Heading()));
@@ -776,28 +1011,37 @@ public class PathTuner extends OpModeEX {
         } else {
             inZone = aX <= model.tolX && aY <= model.tolY && aH <= model.tolH;
         }
+        boolean inArea = searching ? probeErr() <= balance() : inZone;
         // "slow", not perfectly stopped - holdPositionAtPathEnd keeps making
         // micro-corrections, so a hard stop threshold never latches
         double vt = Math.hypot(odometry.getXVelocity(), odometry.getYVelocity());
         boolean stopped = vt < stopEpsT * 3 && Math.abs(degPerSec()) < stopEpsH * 3;
 
-        if (inZone && stopped) {
-            if (settleStreak == 0) settleEnterT = phaseTimer.seconds();
+        if (!Double.isNaN(settledAt)) {
+            // settled - keep holding and watch for the endpoint twitch
+            if (wasInZone && !inZone) fineExits++;
+            wasInZone = inZone;
+            if (t >= settledAt + HOLD_WATCH) {
+                captureFinal();
+                finishPath();
+            }
+            return;
+        }
+
+        if (inArea && stopped) {
+            if (settleStreak == 0) settleEnterT = t;
             settleStreak++;
             if (settleStreak >= SETTLE_N) {
                 tr.settleTime = settleEnterT;
-                tr.finalErrX = aX;
-                tr.finalErrY = aY;
-                tr.finalPosErr = Math.hypot(aX, aY);
-                tr.finalHdgErr = aH;
-                finishPath();
+                settledAt = settleEnterT;
+                wasInZone = inZone;
                 return;
             }
         } else {
             settleStreak = 0;
         }
 
-        if (phaseTimer.seconds() > SETTLE_TIMEOUT) {
+        if (t > SETTLE_TIMEOUT) {
             tr.timedOut = true;
             tr.settleTime = SETTLE_TIMEOUT;
             captureFinal();
@@ -846,6 +1090,14 @@ public class PathTuner extends OpModeEX {
 
     private void finishPath() {
         if (!searching) logPath();
+        // ping-pong: a clean run that ended in a sensible spot is the next
+        // run's start, so skip the drive home
+        if (searching && !tr.leftBox && !tr.timedOut
+                && Math.hypot(odometry.X() - CX, odometry.Y() - CY) <= 100 * pathScale() + 15
+                && Math.abs(wrap180(odometry.Heading())) <= 60) {
+            searchDecision();
+            return;
+        }
         buildReturnPath();
         state = searching ? State.SEARCH_RETURN : State.VERIFY_RETURN;
         phaseTimer.reset();
@@ -886,6 +1138,7 @@ public class PathTuner extends OpModeEX {
         safeFollow.setPath(paths.returnPath("backPath"));
         safeFollow.usePathHeadings(false);
         safeFollow.holdPositionAtPathEnd(true);
+        FollowerPrimer.primeHeading(safeFollow, 0, odometry.Heading());
     }
 
     /** @return true only when ACTUALLY near home (retries the return path if a
@@ -913,6 +1166,7 @@ public class PathTuner extends OpModeEX {
     }
 
     private void drive(Follower f, double heading) {
+        FollowerPrimer.prime(f, odometry.Heading(), odometry.X(), odometry.Y());
         RobotPower cp = f.followPathAuto(heading, odometry.Heading(), odometry.X(), odometry.Y(), odometry.getXVelocity(), odometry.getYVelocity());
         driveBase.queueCommand(driveBase.drivePowers(
                 clamp(cp.getVertical(), -maxPower, maxPower),
@@ -996,13 +1250,22 @@ public class PathTuner extends OpModeEX {
         if (vClamped[0] || vClamped[1] || vClamped[2] || aClamped[0] || aClamped[1] || aClamped[2])
             telemetry.addData("!! BOUNDS HIT (V F/S/T, A F/S/T)", String.format("%b/%b/%b, %b/%b/%b",
                     vClamped[0], vClamped[1], vClamped[2], aClamped[0], aClamped[1], aClamped[2]));
+        telemetry.addData("brake decel F/S/T (0 power)", String.format("%.0f / %.0f / %.0f   profile accel %.0f",
+                brakeDecel[0], brakeDecel[1], brakeDecel[2], profileAccel(false)));
+        telemetry.addData("loop dt", String.format("%.1f ms   max wheel speed %.2f", loopDt * 1000,
+                driveBase.maxWheelSpeedFraction()));
         if (state == State.SEARCH_PROBE || state == State.SEARCH_RETURN)
-            telemetry.addData("search", axisName(sIdx) + "  ts=" + String.format("%.2f", curTs)
-                    + "  iter=" + sIter + (confirming ? "  CONFIRMING" : ""));
+            telemetry.addData("search", String.format("%s %s  ts %.2f  zeta %.2f  end %.2f  run %d  last cost %.2f",
+                    axisName(sIdx), stage, curTs, curZeta, curEnd, sIter + 1, lastCost));
+        if (state == State.SEARCH_PROBE)
+            telemetry.addData("this run", String.format("in area @%.2fs  stopped @%.2fs  reversals %d  fine exits %d  cost so far %.2f",
+                    tCoarse, settledAt, reversals, fineExits, costInt));
         if (state == State.VERIFY_RUN || state == State.VERIFY_RETURN)
             telemetry.addData("verify path", (batteryIdx + 1) + "/" + BATTERY.length);
         telemetry.addData("locked ts X/Y/H", String.format("%.2f / %.2f / %.2f",
                 lockedTs[0], lockedTs[1], lockedTs[2]));
+        telemetry.addData("zeta X/Y/H  end X/Y", String.format("%.2f / %.2f / %.2f   %.2f / %.2f",
+                model.zetaX, model.zetaY, model.zetaH, model.endX, model.endY));
         telemetry.addData("pos", String.format("%.0f,%.0f  h%.0f",
                 odometry.X(), odometry.Y(), odometry.Heading()));
         if (tunedGains != null) {
@@ -1010,13 +1273,10 @@ public class PathTuner extends OpModeEX {
             if (fullPowerOutput) telemetry.addLine("gains (OUTPUT, full power): " + fmt(outputGains()));
             telemetry.addData("OUTPUT consts maxXV/YV/XA/YA", String.format("%.0f / %.0f / %.0f / %.0f",
                     outV(Ax.FWD.ordinal(), FALLBACK_XV), outV(Ax.STR.ordinal(), FALLBACK_YV),
-                    outA(Ax.FWD.ordinal(), FALLBACK_XA), outA(Ax.STR.ordinal(), FALLBACK_YA)));
+                    profileAccel(fullPowerOutput), profileAccel(fullPowerOutput)));
         }
-        for (int i = 0; i < 3; i++) {
-            if (!Double.isNaN(firstSettle[i]) && !Double.isNaN(bestSettle[i]))
-                telemetry.addData("settle " + axisName(i), String.format("%.2fs -> %.2fs",
-                        firstSettle[i], bestSettle[i]));
-        }
+        telemetry.addData("best cost X/Y/H", String.format("%.2f / %.2f / %.2f",
+                bestCost[0], bestCost[1], bestCost[2]));
         if (state == State.FINISHED) telemetry.addLine(">>> DONE - saved to tune_best.txt (" + (fullPowerOutput ? "FULL POWER" : "AS TESTED") + ") - Y switches mode + re-saves <<<");
     }
 
@@ -1071,8 +1331,15 @@ public class PathTuner extends OpModeEX {
                     maxV[0], maxV[1], maxV[2], plateauOk[0], plateauOk[1], plateauOk[2]));
             w.write(String.format("// accel per power (regression)  fwd=%.0f strafe=%.0f turn=%.0f\n",
                     model.aFwd, model.aStr, model.aTurn));
-            w.write(String.format("// locked ts  X=%.2f Y=%.2f H=%.2f  (zeta=%.2f, lock margin %.2fx)\n",
-                    lockedTs[0], lockedTs[1], lockedTs[2], model.zeta, LOCK_MARGIN));
+            w.write(String.format("// brake decel (0 power)  fwd=%.0f strafe=%.0f turn=%.0f  -> profile accel %.0f\n",
+                    brakeDecel[0], brakeDecel[1], brakeDecel[2], profileAccel(fullPowerOutput)));
+            w.write(String.format("// locked ts  X=%.2f Y=%.2f H=%.2f  zeta %.2f/%.2f/%.2f  end %.2f/%.2f  best cost %.2f / %.2f / %.2f\n",
+                    lockedTs[0], lockedTs[1], lockedTs[2], model.zetaX, model.zetaY, model.zetaH,
+                    model.endX, model.endY, bestCost[0], bestCost[1], bestCost[2]));
+            w.write(String.format("// D gains are PER LOOP, tuned at loop dt %.1f ms - retune if your OpMode loop is much slower/faster\n",
+                    model.loopDt * 1000));
+            w.write(String.format("// DriveBase: fullSpeedFwd=%.0f fullSpeedStr=%.0f fullSpeedTurn=%.0f\n",
+                    driveBase.fullSpeedFwd, driveBase.fullSpeedStr, driveBase.fullSpeedTurn));
             w.write("new RobotConfig()\n");
             w.write(String.format("    .setXOnPathPD(%.5f, %.5f)\n", b[0], b[1]));
             w.write(String.format("    .setYOnPathPD(%.5f, %.5f)\n", b[2], b[3]));
@@ -1083,8 +1350,8 @@ public class PathTuner extends OpModeEX {
             w.write(String.format("    .setRobotConstants(%.0f, %.0f, %.0f, %.0f);\n",
                     outV(Ax.FWD.ordinal(), FALLBACK_XV),
                     outV(Ax.STR.ordinal(), FALLBACK_YV),
-                    outA(Ax.FWD.ordinal(), FALLBACK_XA),
-                    outA(Ax.STR.ordinal(), FALLBACK_YA)));
+                    profileAccel(fullPowerOutput),
+                    profileAccel(fullPowerOutput)));
             w.close();
         } catch (IOException ignored) {}
     }

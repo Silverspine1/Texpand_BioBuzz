@@ -28,15 +28,20 @@ public class DriveBase extends SubSystem {
 
     PIDController headingPID = new PIDController(0.025, 0, 0.0003);
 
-    // Direct-drive (bare motor) protection: never plug-reverse a wheel that is
-    // still travelling fast. Above reverseBrakeSpeed a reversal is replaced by
-    // a 0-power command (motor BRAKE, which draws far less current than
-    // plugging); below it the reversal is allowed but slew-limited.
+    // Direct-drive (bare motor) protection. Winding current ~ (applied - backEMF),
+    // so a wheel driven against its own motion is limited to
+    //   |reverse power| <= plugLimit - |wheel speed as a fraction of full speed|
+    // A fast wheel gets 0 (BRAKE); reverse power fades in as it slows. No
+    // switching or slew, so feedback loops see no added lag.
     public boolean protectReversal = true;
-    public double reverseBrakeSpeed = 25;   // cm/s, robot speed from odometry
-    public double reverseSlewPerSec = 6;    // power/s while crossing/leaving zero
-    private final double[] applied = new double[4];   // LF, RF, LB, RB last output
-    private long lastProtectNanos = 0;
+    public double plugLimit = 0.8;
+    // Full-power speeds used to estimate wheel speed from odometry. Lower = more
+    // conservative. PathTuner overwrites these with measured values.
+    public double fullSpeedFwd = 180;       // cm/s
+    public double fullSpeedStr = 140;       // cm/s
+    public double fullSpeedTurn = 400;      // deg/s
+    public boolean odoVelocityRobotFrame = false;
+    private final double[] wheelSpeed = new double[4];   // LF, RF, LB, RB fraction of full speed
 
     double vertical;
     double turn;
@@ -100,23 +105,19 @@ public class DriveBase extends SubSystem {
                 double lbT = ((vertical - strafe + turn) / denominator) * speed;
                 double rbT = ((vertical + strafe - turn) / denominator) * speed;
 
+                if (protectReversal) {
+                    estimateWheelSpeeds();
+                    lfT = limitPlug(lfT, wheelSpeed[0]);
+                    rfT = limitPlug(rfT, wheelSpeed[1]);
+                    lbT = limitPlug(lbT, wheelSpeed[2]);
+                    rbT = limitPlug(rbT, wheelSpeed[3]);
+                }
+
                 double m0, m1, m2, m3;
                 if (!engage) {
                     m0 = -lfT; m1 = rfT; m2 = -lbT; m3 = rbT;
                 } else {
                     m0 = lfT; m1 = rfT; m2 = 0; m3 = 0;
-                }
-                if (protectReversal) {
-                    long now = System.nanoTime();
-                    double dt = lastProtectNanos == 0 ? 0.02 : Math.min(0.1, (now - lastProtectNanos) / 1e9);
-                    lastProtectNanos = now;
-                    OpModeEX op = (OpModeEX) getOpMode();
-                    double v = Math.hypot(op.odometry.getXVelocity(), op.odometry.getYVelocity())
-                            + Math.abs(op.odometry.getHVelocity()) * 20;  // spin contribution (~wheel radius from centre, cm)
-                    m0 = protect(0, m0, dt, v);
-                    m1 = protect(1, m1, dt, v);
-                    m2 = protect(2, m2, dt, v);
-                    m3 = protect(3, m3, dt, v);
                 }
                 LF.update(m0);
                 RF.update(m1);
@@ -128,21 +129,40 @@ public class DriveBase extends SubSystem {
 
 
 
-    /** Reversal guard for one wheel. Returns the power to actually send. */
-    private double protect(int i, double target, double dt, double speedCmS) {
-        double cur = applied[i];
-        boolean reversing = cur * target < 0;
-        double out = target;
-
-        if (reversing && speedCmS > reverseBrakeSpeed) {
-            out = 0;                                   // brake instead of plug-reversing
-        } else if (target != 0 && (Math.signum(cur) != Math.signum(target) || Math.abs(cur) < 0.1)) {
-            // crossing zero or leaving rest: limit how fast power builds
-            double maxStep = reverseSlewPerSec * dt;
-            out = cur + Math.max(-maxStep, Math.min(maxStep, target - cur));
+    /** Wheel speeds in the same (pre sign-flip) space as lfT..rbT, as a fraction of full speed. */
+    private void estimateWheelSpeeds() {
+        OpModeEX op = (OpModeEX) getOpMode();
+        double vx = op.odometry.getXVelocity();
+        double vy = op.odometry.getYVelocity();
+        double fwd, str;
+        if (odoVelocityRobotFrame) {
+            fwd = vx;
+            str = vy;
+        } else {
+            double h = Math.toRadians(op.odometry.Heading());
+            fwd = vy * Math.sin(h) + vx * Math.cos(h);
+            str = vy * Math.cos(h) - vx * Math.sin(h);
         }
-        applied[i] = out;
-        return out;
+        double wf = fwd / fullSpeedFwd;
+        double ws = str / fullSpeedStr;
+        double wt = op.odometry.getHeadingVelocityDeg() / fullSpeedTurn;
+        wheelSpeed[0] = wf + ws + wt;
+        wheelSpeed[1] = wf - ws - wt;
+        wheelSpeed[2] = wf - ws + wt;
+        wheelSpeed[3] = wf + ws - wt;
+    }
+
+    private double limitPlug(double cmd, double wheel) {
+        if (cmd * wheel >= 0) return cmd;
+        double allowed = Math.max(0, plugLimit - Math.abs(wheel));
+        return Math.signum(cmd) * Math.min(Math.abs(cmd), allowed);
+    }
+
+    /** Largest |wheel speed| fraction right now (for telemetry / tuning). */
+    public double maxWheelSpeedFraction() {
+        double m = 0;
+        for (double w : wheelSpeed) m = Math.max(m, Math.abs(w));
+        return m;
     }
 
     public void driveFieldCentric(double drive, double strafe, double turn, double robotHeading) {
