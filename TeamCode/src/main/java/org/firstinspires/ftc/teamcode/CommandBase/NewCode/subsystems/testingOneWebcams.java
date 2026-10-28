@@ -21,46 +21,44 @@ public class testingOneWebcams extends LinearOpMode
     @Override
     public void runOpMode() throws InterruptedException
     {
-
         pipeline proc = new pipeline();
 
-
-        portal = null;
-        VisionPortal.Builder builder = new VisionPortal.Builder();
-        builder.setCamera(hardwareMap.get(WebcamName.class, "Webcam 1"));
-        builder.setCameraResolution(new Size(640, 480));
-        builder.setStreamFormat(VisionPortal.StreamFormat.MJPEG);
-        portal = builder.build();
         dashboard = FtcDashboard.getInstance();
         telemetry = new MultipleTelemetry(telemetry, dashboard.getTelemetry());
-        dashboard.startCameraStream(portal, 30);
-        /*for (int attempt = 1; attempt <= 3 && !isStopRequested(); attempt++) {
-            portal = new VisionPortal.Builder()
-                    .setCamera(hardwareMap.get(WebcamName.class, "Webcam 1"))
-                    .addProcessor(proc)
-                    .build();
 
-            if (portal.getCameraState() != VisionPortal.CameraState.ERROR) break;
+        portal = new VisionPortal.Builder()
+                .setCamera(hardwareMap.get(WebcamName.class, "Webcam 1"))
+                .setCameraResolution(new Size(640, 480))
+                .setStreamFormat(VisionPortal.StreamFormat.MJPEG)
+                .addProcessor(proc)
+                .build();
 
-            telemetry.addData("Open attempt failed", attempt);
-            telemetry.update();
-            portal.close();
-            sleep(1000);
-        }
-*/
+        // Stream the processor's annotated frames, not the raw portal frames
+        dashboard.startCameraStream(proc, 30);
+
         waitForStart();
 
         while (opModeIsActive())
         {
             Point c = proc.getCenter();
+            double[] centerHsv = proc.getCenterHsv();
+            double[] targetHsv = proc.getTargetHsv();
+            double[] xy = proc.getRobotXY();
+
             telemetry.addData("Camera state", portal.getCameraState());
-            telemetry.addData("Center", c == null ? "none" : c);
             telemetry.addData("FPS", "%.1f", portal.getFps());
+            telemetry.addData("Center px", c == null ? "none" : c);
+            telemetry.addData("Image-center HSV", centerHsv == null ? "none"
+                    : String.format("%.0f %.0f %.0f", centerHsv[0], centerHsv[1], centerHsv[2]));
+            telemetry.addData("Target HSV", targetHsv == null ? "none"
+                    : String.format("%.0f %.0f %.0f", targetHsv[0], targetHsv[1], targetHsv[2]));
+            telemetry.addData("Robot-relative (fwd, left) in", xy == null ? "none"
+                    : String.format("%.1f, %.1f", xy[0], xy[1]));
             telemetry.update();
             sleep(20);
         }
 
-
+        dashboard.stopCameraStream();
         portal.close();
     }
 }
