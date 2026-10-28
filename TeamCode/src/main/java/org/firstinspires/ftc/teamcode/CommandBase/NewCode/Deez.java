@@ -82,7 +82,7 @@ public class Deez extends OpMode {
 
         // Bypass the built-in velocity PID, we do our own
         TestMotter.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-        TestMotter.setDirection(DcMotorSimple.Direction.REVERSE);
+        TestMotter.setDirection(DcMotorSimple.Direction.FORWARD);
         TestMotter2.setDirection(DcMotorSimple.Direction.REVERSE);
 
         TestMotter3.setDirection(DcMotorSimple.Direction.FORWARD); // positive target = shooting direction
