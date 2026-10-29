@@ -18,9 +18,9 @@ public class Transfer extends SubSystem {
 
     MotorEx TMotor = new MotorEx();
 
-    double closed = 70;
-    double open = 225;
-    intakeHardware IntakeHardware;
+    double closed = 0;
+    double open = 60;
+    intakeHardware_doubleBot IntakeHardware;
     transferState Transfer = transferState.closed;
     ServoDegrees blocker = new ServoDegrees();
     public boolean transfer = false;
@@ -35,7 +35,7 @@ public class Transfer extends SubSystem {
     @Override
     public void init() {
         blocker.setRange(255);
-        TMotor.initMotor("TMotor", getOpMode().hardwareMap);
+//        TMotor.initMotor("TMotor", getOpMode().hardwareMap);
     }
 
     @Override
@@ -43,7 +43,7 @@ public class Transfer extends SubSystem {
         executeEX();
 
         if (transfer && TransferTimer.milliseconds() > transferTime) {
-            IntakeHardware.State = intakeHardware.intakeState.off;
+            IntakeHardware.State = intakeHardware_doubleBot.intakeState.off;
             transfer = false;
             TMotor.update(0);
         }
@@ -53,10 +53,10 @@ public class Transfer extends SubSystem {
         this.transfer = transfer;
         this.transferTime = transferTime;
 
-         if (transfer) {
-            TransferTimer.reset();
-            TMotor.update(-1);
-            IntakeHardware.State = intakeHardware.intakeState.intaking;
-        }
+//         if (transfer) {
+//            TransferTimer.reset();
+//            TMotor.update(-1);
+//            IntakeHardware.State = intakeHardware_doubleBot.intakeState.int;
+//        }
     }
 }

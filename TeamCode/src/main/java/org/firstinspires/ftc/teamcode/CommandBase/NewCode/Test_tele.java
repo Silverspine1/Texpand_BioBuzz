@@ -1,11 +1,9 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode;
 
-import com.acmerobotics.dashboard.FtcDashboard;
-import com.acmerobotics.dashboard.telemetry.TelemetryPacket;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware_doubleBot;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.AxonEncoder;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.SetTurretAngle;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.ServoSelect;
@@ -17,6 +15,7 @@ import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
 public class Test_tele extends OpModeEX {
 
     private static final double CHECK_WINDOW_S = 0.25;
+
 
     private final ElapsedTime turretWindow = new ElapsedTime();
     private double windowStartAngle = 0;
@@ -69,16 +68,20 @@ public class Test_tele extends OpModeEX {
     @Override
     public void loopEX() {
         Loop.reset();
-        driveBase.drivePowers(gamepad1.right_stick_y,-gamepad1.right_stick_x,-(gamepad1.left_trigger- gamepad1.right_trigger));
+        driveBase.drivePowers(gamepad1.right_stick_y,-gamepad1.right_stick_x,(gamepad1.left_trigger- gamepad1.right_trigger));
+        IntakeHardware.Vertical = driveBase.vertical;
         if (gamepad1.right_bumper){
-            IntakeHardware.State = intakeHardware.intakeState.intaking;
-        }else if(!transfer.transfer) {
-            IntakeHardware.State = intakeHardware.intakeState.off;
+            IntakeHardware.State = intakeHardware_doubleBot.intakeState.intaking;
+        }else if(!gamepad1.left_bumper) {
+            IntakeHardware.State = intakeHardware_doubleBot.intakeState.off;
         }
-        if (!lastGamepad1.left_bumper && currentGamepad1.left_bumper){
-            transfer.Trans(true,500);
-        }
-        if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up) {
+        if (gamepad1.left_bumper){
+            IntakeHardware.State = intakeHardware_doubleBot.intakeState.transfering;
+        }else if (!gamepad1.right_bumper){
+            IntakeHardware.State = intakeHardware_doubleBot.intakeState.off;
+
+
+        }        if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up) {
             shooterController.targeting = !shooterController.targeting;
             if (shooterController.targeting) {
                 pingPong = false;
@@ -292,21 +295,7 @@ public class Test_tele extends OpModeEX {
         }
         packetTimer.reset();
 
-        TelemetryPacket packet = new TelemetryPacket();
-        packet.put("target", turret.getTargetPosition());
-        packet.put("profilePos", turret.getProfilePosition());
-        packet.put("actualPos", encoder.getTurretAngle());
-        packet.put("profileVel", turret.getProfileVelocity());
-        packet.put("actualVel", encoder.getVelocity());
-        packet.put("output", turret.getOutput());
-        packet.put("error", turret.getPositionError());
-        packet.put("rpm", shooterController.RPM);
-        packet.put("rpmTarget", shooterController.getTargetRPM());
-        packet.put("flywheelPower", shooterController.flywheelPower);
-        if (ShooterTuning.fieldView) {
-            fieldView.draw(packet, shooterController, odometry);
-        }
-        FtcDashboard.getInstance().sendTelemetryPacket(packet);
+
     }
 
     private void checkTurretDirection(AxonEncoder encoder) {

@@ -1,13 +1,13 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.State;
 
 import org.firstinspires.ftc.robotcore.external.State;
-import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware_doubleBot;
 
 import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 
 public class RobotState extends SubSystem {
 
-    intakeHardware IntakeHardware;
+    intakeHardware_doubleBot IntakeHardware;
     public enum IntakeDirState{
         INTAKING,
         EJECTING

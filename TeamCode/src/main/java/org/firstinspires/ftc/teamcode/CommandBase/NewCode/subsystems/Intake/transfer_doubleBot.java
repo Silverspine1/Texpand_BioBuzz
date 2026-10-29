@@ -1,0 +1,61 @@
+//package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake;
+//
+//import com.qualcomm.robotcore.util.ElapsedTime;
+//
+//import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
+//
+//import dev.weaponboy.nexus_command_base.Commands.LambdaCommand;
+//import dev.weaponboy.nexus_command_base.Hardware.MotorEx;
+//import dev.weaponboy.nexus_command_base.Hardware.ServoDegrees;
+//import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
+//
+//public class transfer_doubleBot extends SubSystem {
+//
+//    enum transferState {
+//        open,
+//        closed
+//    }
+//
+//    MotorEx TMotor = new MotorEx();
+//
+//    double closed = 0;
+//    double open = 60;
+//    intakeHardware_doubleBot IntakeHardware;
+//    transferState Transfer = transferState.closed;
+//    ServoDegrees blocker = new ServoDegrees();
+//    public boolean transfer = false;
+//    double transferTime = 500;
+//    ElapsedTime TransferTimer = new ElapsedTime();
+//
+//    public transfer_doubleBot(OpModeEX opModeEX) {
+//        registerSubsystem(opModeEX, returnDefaultCommand());
+//    }
+//
+//    @Override
+//    public void init() {
+//        blocker.setRange(255);
+//        TMotor.initMotor("TMotor", getOpMode().hardwareMap);
+//    }
+//
+//    @Override
+//    public void execute() {
+//        executeEX();
+//
+//        if (transfer && TransferTimer.milliseconds() > transferTime) {
+//            IntakeHardware.State = intakeHardware.intakeState.off;
+//            transfer = false;
+//            TMotor.update(0);
+//        }
+//    }
+//
+//    public void Trans(boolean transfer, double transferTime) {
+//        this.transfer = transfer;
+//        this.transferTime = transferTime;
+//
+//         if (transfer) {
+//            TransferTimer.reset();
+//            TMotor.update(-1);
+//            IntakeHardware.State = intakeHardware.intakeState.intaking;
+//        }
+//    }
+//}

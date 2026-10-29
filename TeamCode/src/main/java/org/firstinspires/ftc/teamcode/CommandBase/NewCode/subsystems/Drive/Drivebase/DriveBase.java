@@ -43,7 +43,8 @@ public class DriveBase extends SubSystem {
     public boolean odoVelocityRobotFrame = false;
     private final double[] wheelSpeed = new double[4];   // LF, RF, LB, RB fraction of full speed
 
-    double vertical;
+    public double vertical;
+
     double turn;
     double strafe;
 

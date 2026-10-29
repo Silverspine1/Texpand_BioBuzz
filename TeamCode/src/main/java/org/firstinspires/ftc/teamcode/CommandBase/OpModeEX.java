@@ -7,7 +7,7 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Drivebase.DriveBase;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.Transfer;
-import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware_doubleBot;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Localisation.Odometry;
 
@@ -17,7 +17,7 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 import java.util.List;
 
 public abstract class OpModeEX extends OpMode {
-    public intakeHardware IntakeHardware = new intakeHardware(this);
+    public intakeHardware_doubleBot IntakeHardware = new intakeHardware_doubleBot(this);
 
     public Odometry odometry = new Odometry(this);
     public Transfer transfer = new Transfer(this);

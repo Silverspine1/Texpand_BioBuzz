@@ -8,8 +8,12 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
+import org.firstinspires.ftc.robotcore.external.hardware.camera.controls.ExposureControl;
+import org.firstinspires.ftc.robotcore.external.hardware.camera.controls.GainControl;
 import org.firstinspires.ftc.vision.VisionPortal;
 import org.opencv.core.Point;
+
+import java.util.concurrent.TimeUnit;
 
 @TeleOp(name = "Single Webcam Blob Test", group = "Test")
 public class testingOneWebcams extends LinearOpMode
@@ -17,6 +21,13 @@ public class testingOneWebcams extends LinearOpMode
     public static VisionPortal portal;
 
     public static FtcDashboard dashboard;
+    public ExposureControl exposureControl;
+    public GainControl gainControl;
+    public static long exposure1 = 10;
+    public static int gain1 = 5;
+
+
+
 
     @Override
     public void runOpMode() throws InterruptedException
@@ -40,6 +51,14 @@ public class testingOneWebcams extends LinearOpMode
 
         while (opModeIsActive())
         {
+            exposureControl = portal.getCameraControl(ExposureControl.class);
+            gainControl = portal.getCameraControl(GainControl.class);
+            exposureControl.setMode(ExposureControl.Mode.Manual);
+
+
+            exposureControl.setExposure(exposure1, TimeUnit.MILLISECONDS);
+            gainControl.setGain(gain1);
+
             Point c = proc.getCenter();
             double[] centerHsv = proc.getCenterHsv();
             double[] targetHsv = proc.getTargetHsv();
