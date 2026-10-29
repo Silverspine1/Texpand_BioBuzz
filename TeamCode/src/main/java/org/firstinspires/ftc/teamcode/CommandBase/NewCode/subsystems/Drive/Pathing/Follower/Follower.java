@@ -19,26 +19,41 @@ import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathi
  *     back onto the path. Commanded accel = the profile's braking slope along
  *     the actual motion + centripetal accel on curves.
  *  4. Power per robot axis from the drive model:
- *        v/speedPerPower + tau*a/speedPerPower + kS + velGain*(v - vMeasured)/speedPerPower
+ *        v/speedPerPower + tau*a/speedPerPower + velGain*(v - vMeasured)/speedPerPower
+ *     plus breakaway power along the commanded DIRECTION (a small sideways
+ *     correction while driving forward gets a small share, not a full kS -
+ *     per-axis kS acted like a relay and shook the robot sideways).
  *  5. Once past the end (or stopped next to it) it settles on the end point,
  *     and outputs 0 inside holdT.
  * Heading: fast PD far from the target, soft PD inside 3 deg (back to fast
- * beyond 6), 0 turn inside holdH, breakaway power added outside it. D is per
- * second.
+ * beyond 6), 0 turn inside holdH. Turn breakaway power fades in outside holdH,
+ * and only while the robot is not translating (rolling wheels need none). D
+ * is per second.
  */
 public class Follower extends FollowerBaseMethods {
 
     private static final double SOFT_IN = 3, SOFT_OUT = 6;    // deg
     private static final double SETTLE_SPEED = 3, SETTLE_DIST = 5;
     private static final double HOLD_SPEED = 8;
+    private static final int HOLD_LOOPS = 2;                 // slow this many loops in a row before holding
+    private static final double HOLD_RELEASE = 1.0;          // cm past holdT before a hold lets go
+    private static final double OVERSHOOT_FADE = 15;         // cm - planned overshoot fades out over the last this
+    // Final approach is a position loop through the actuation delay: above
+    // kEnd * (delay + loop) ~ 0.7 it bounces around the target (sim, and the
+    // robot logs). kEnd is capped there whatever the config says.
+    public static final double K_END_DELAY_LIMIT = 0.7;
     private static final double KS_SPEED = 3;                // cm/s - kS fades in over this commanded speed
+    private static final double TURN_KS_SPEED = 20;          // cm/s - turn kS gone above this robot speed
 
     /** Time source (nanoseconds) - swap it to run the follower in a simulation. */
     public interface Clock { long nanos(); }
     public static Clock clock = System::nanoTime;
 
     private long lastNanos = 0;
+    private double loopDt = 0.02;
     private boolean settling = false;
+    private int slowLoops = 0;
+    private double ksFade = 1;
     private boolean softHeading = false;
     private boolean fresh = true;
     private double prevRot = Double.NaN;
@@ -47,6 +62,7 @@ public class Follower extends FollowerBaseMethods {
     private double lastTargetSpeed = 0, lastRemaining = 0;
     private int lastLimiter = 0;            // 0 top speed, 1 corner, 2 braking sqrt, 3 end tail
     private double lastVTarget = 0, lastRot = 0, lastDRot = 0;
+    private double robotSpeed = 0;
 
     public Follower() {
         this(new RobotConfig());
@@ -93,6 +109,7 @@ public class Follower extends FollowerBaseMethods {
         createNewPathOperator(path);
         settling = false;
         heldXY = false;
+        slowLoops = 0;
         prevRot = Double.NaN;
         lastNanos = 0;
         fresh = true;
@@ -104,6 +121,7 @@ public class Follower extends FollowerBaseMethods {
         double gap = lastNanos == 0 ? 0.02 : (now - lastNanos) / 1e9;
         if (gap > 0.2) prevRot = Double.NaN;
         double dt = clamp(gap, 0.002, 0.1);
+        loopDt += 0.1 * (dt - loopDt);
         lastNanos = now;
         if (!finite(H) || !finite(X) || !finite(Y)) return new RobotPower(0, 0, 0);
         if (!finite(XV)) XV = 0;
@@ -134,6 +152,7 @@ public class Follower extends FollowerBaseMethods {
         double ex = end.getX() - X, ey = end.getY() - Y;
         double dist = Math.hypot(ex, ey);
         double speed = Math.hypot(XV, YV);
+        robotSpeed = speed;
         int last = pathoperator.size() - 1;
 
         if (translate && !settling) {
@@ -145,13 +164,20 @@ public class Follower extends FollowerBaseMethods {
         }
 
         if (translate && settling) {
-            if (heldXY && dist > 2 * config.holdT) heldXY = false;
-            if (!heldXY && dist <= config.holdT && speed < HOLD_SPEED) heldXY = true;
+            // a speed zero-crossing in a bounce is not "stopped": need a few slow loops
+            slowLoops = speed < HOLD_SPEED ? slowLoops + 1 : 0;
+            if (heldXY && dist > config.holdT + HOLD_RELEASE) heldXY = false;
+            if (!heldXY && dist <= config.holdT && slowLoops >= HOLD_LOOPS) heldXY = true;
             if (heldXY) translate = false;
         }
 
+        ksFade = 1;
         if (translate && settling) {
-            // point mode: straight at the end point, no planned overshoot
+            // point mode: straight at the end point, no planned overshoot.
+            // Breakaway power fades out approaching the hold zone - at full
+            // strength it flips direction every time the robot crosses the
+            // target and the robot hunts around it.
+            ksFade = clamp((dist - 0.5 * config.holdT) / Math.max(0.1, config.holdT), 0, 1);
             double dx = end.getX() - px, dy = end.getY() - py;
             double r = Math.hypot(dx, dy);
             if (r > 1e-6) {
@@ -170,7 +196,10 @@ public class Follower extends FollowerBaseMethods {
             double ox = px - p.getX(), oy = py - p.getY();
             double along = ox * tx + oy * ty;
             double sRem = pathoperator.remaining(idx) - along;
-            double r = sRem + config.overshoot;
+            // planned overshoot moves the braking point later, but fades out
+            // near the end so the target speed AT the end is 0 - otherwise the
+            // hand-over to settling reverses a still-moving command (a jolt)
+            double r = sRem + config.overshoot * clamp(sRem / OVERSHOOT_FADE, 0, 1);
             double vAlong = XV * tx + YV * ty;
             double[] va = profile(r, tx, ty, pathoperator.cornerSpeed(idx), vAlong, sin, cos);
             lastVTarget = va[0];
@@ -207,8 +236,14 @@ public class Follower extends FollowerBaseMethods {
                 af = ay * sin + ax * cos;
                 as = ay * cos - ax * sin;
             }
-            pf = axisPower(vf, af, mf, config.speedPerPowerFwd, config.tauFwd, config.ksFwd, config.velGainFwd);
-            ps = axisPower(vs, as, ms, config.speedPerPowerStr, config.tauStr, config.ksStr, config.velGainStr);
+            pf = axisPower(vf, af, mf, config.speedPerPowerFwd, config.tauFwd, config.velGainFwd);
+            ps = axisPower(vs, as, ms, config.speedPerPowerStr, config.tauStr, config.velGainStr);
+            double vmag = Math.hypot(vf, vs);
+            if (vmag > 1e-6) {
+                double k = ksFade * Math.tanh(vmag / KS_SPEED) / vmag;
+                pf += config.ksFwd * vf * k;
+                ps += config.ksStr * vs * k;
+            }
             double sum = Math.abs(pf) + Math.abs(ps);
             if (sum > config.powerLimit && sum > 1e-9) {
                 pf *= config.powerLimit / sum;
@@ -250,7 +285,7 @@ public class Follower extends FollowerBaseMethods {
         double sgn = r >= 0 ? 1 : -1;
         double rr = Math.abs(r);
         double decel = dirBlend(ux, uy, sin, cos, config.MAX_X_ACCELERATION(), config.MAX_Y_ACCELERATION());
-        double kEnd = dirBlend(ux, uy, sin, cos, config.kEndFwd, config.kEndStr);
+        double kEnd = Math.min(dirBlend(ux, uy, sin, cos, config.kEndFwd, config.kEndStr), kEndLimit(config.delay, loopDt));
         double vTop = Math.min(dirMaxSpeed(ux, uy, sin, cos), corner);
         double vBrake = Math.sqrt(2 * decel * rr);
         double vTail = kEnd * rr;
@@ -263,9 +298,14 @@ public class Follower extends FollowerBaseMethods {
         return new double[]{sgn * v, sgn * a};
     }
 
-    private double axisPower(double v, double a, double vMeas, double spp, double tau, double ks, double velGain) {
+    /** Highest stable final-approach stiffness for this delay and loop time. */
+    public static double kEndLimit(double delay, double loopDt) {
+        return K_END_DELAY_LIMIT / Math.max(0.02, delay + loopDt);
+    }
+
+    private double axisPower(double v, double a, double vMeas, double spp, double tau, double velGain) {
         spp = Math.max(1, spp);
-        return v / spp + tau * a / spp + ks * Math.tanh(v / KS_SPEED) + velGain * (v - vMeas) / spp;
+        return v / spp + tau * a / spp + velGain * (v - vMeas) / spp;
     }
 
     /** Top speed in field direction (dx, dy): mecanum share |f|/Vf + |s|/Vs <= 1. */
@@ -307,7 +347,10 @@ public class Follower extends FollowerBaseMethods {
         double d = soft ? config.headingSlowD : config.headingFastD;
         double turn = -(p * rot + d * dRot);
         if (soft && a <= config.holdH) return 0;
-        if (a > config.holdH) turn -= Math.signum(rot) * config.ksTurn;
+        double h = Math.max(0.1, config.holdH);
+        double fadeIn = clamp((a - h) / h, 0, 1);
+        double still = clamp(1 - robotSpeed / TURN_KS_SPEED, 0, 1);
+        turn -= Math.signum(rot) * config.ksTurn * fadeIn * still;
         return turn;
     }
 

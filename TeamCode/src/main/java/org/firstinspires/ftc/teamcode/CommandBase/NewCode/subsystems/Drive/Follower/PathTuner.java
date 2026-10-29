@@ -83,7 +83,9 @@ public class PathTuner extends OpModeEX {
     private static final double HOME_OK_DIST    = 30;    // cm - close enough to start a path
     private static final int    SETTLE_N        = 5;     // consecutive in-zone+stopped samples
     private static final int    OVERSHOOT_N     = 4;     // consecutive past-tol samples = real
-    private static final double SAMPLE_DT_MIN   = 0.02;
+    private static final double SAMPLE_DT_MIN   = 0.005;  // ~every loop
+    private static final double PUSH_START_IN   = 30;     // cm inside the box edge the forward / strafe push starts from
+    private static final double TAU_MIN = 0.05, TAU_MAX = 0.30;  // s - a fit outside this is a bad fit, not a drivetrain
 
     // ---- run cost: integral of a soft error penalty over a fixed window ----
     //   f(e) = 1 - exp(-(e / BALANCE)^2)
@@ -95,7 +97,8 @@ public class PathTuner extends OpModeEX {
     private static final double BALANCE_T = 5.0, BALANCE_H = 5.0;   // cm, deg
     private static final double COST_HORIZON = 4.4;              // s - same window for every run
     private static final double W_TWITCH = 0.08;                 // s per direction reversal once in the area
-    private static final double W_CHATTER = 0.1;                 // per unit of command change once in the area (buzz / limit cycle)
+    private static final double W_CHATTER = 0.1;                 // per unit of command change (all axes) once in the area (buzz / shudder)
+    private static final double W_OFF_AXIS = 0.5;                // off-axis error (sideways / heading) as a share of the main penalty
     private static final double COST_LEFT_BOX = 20;
 
     // ---- search per axis: stiffness (golden section), then damping and
@@ -103,7 +106,7 @@ public class PathTuner extends OpModeEX {
     private static final double TS_LO_T = 0.18, TS_HI_T = 1.2;
     private static final double TS_LO_H = 0.20, TS_HI_H = 1.4;
     // translation: final-approach stiffness kEnd (1/s) and speed-feedback gain
-    private static final double KEND_LO = 5, KEND_HI = 40;
+    private static final double KEND_LO = 4, KEND_HI = 40;       // HI is lowered to just above the delay stability limit
     private static final double[] VG_TRY = {0.5, 2.0};
     private static final double VG_LO = 0.25, VG_HI = 4;
     private static final int    GS_EVALS = 5;
@@ -170,6 +173,7 @@ public class PathTuner extends OpModeEX {
     // last drive command (fwd, strafe, turn) and its chatter once in the area
     private double cmdF = 0, cmdS = 0, cmdT = 0;
     private double chatter = 0, chatterLast = Double.NaN;
+    private double lastCmdF, lastCmdS, lastCmdT, costOff = 0, lastOffT = 0;
 
     // control loop period, EMA (s)
     private double loopDt = 0.02;
@@ -183,7 +187,7 @@ public class PathTuner extends OpModeEX {
     private enum State {
         IDLE, NOISE,
         BREAK_RAMP, BREAK_LURCH, BREAK_RETURN,
-        MAXVA_PUSH, MAXVA_BRAKE, MAXVA_RETURN,
+        MAXVA_PREP, MAXVA_PUSH, MAXVA_BRAKE, MAXVA_RETURN,
         SEARCH_PROBE, SEARCH_RETURN,
         VERIFY_RUN, VERIFY_RETURN,
         FINISHED
@@ -338,6 +342,12 @@ public class PathTuner extends OpModeEX {
                     else beginBreak(axIdx);
                 }
                 break;
+            case MAXVA_PREP:
+                if (returnHome() || skip) {
+                    setHome(CX, CY);
+                    startMaxVaPush();
+                }
+                break;
             case MAXVA_PUSH:   runMaxVaPush(skip);  break;
             case MAXVA_BRAKE:  runMaxVaBrake();     break;
             case MAXVA_RETURN:
@@ -474,8 +484,21 @@ public class PathTuner extends OpModeEX {
     }
 
     // ============================= 3. MAX V / A =============================
+    /** Forward / strafe pushes start near the far edge (twice the runway of
+     *  the centre) so the speed actually levels off - a push cut short left
+     *  the response time and speed-per-power poorly determined. */
     private void beginMaxVa(int i) {
         axIdx = i;
+        double in = areaSize / 2 - PUSH_START_IN;
+        if (Ax.values()[i] == Ax.FWD) setHome(CX - in, CY);
+        else if (Ax.values()[i] == Ax.STR) setHome(CX, CY - in);
+        else { startMaxVaPush(); return; }
+        buildReturnPath();
+        phaseTimer.reset();
+        state = State.MAXVA_PREP;
+    }
+
+    private void startMaxVaPush() {
         markPhaseStart();
         samples.clear();
         posSamples.clear();
@@ -614,11 +637,25 @@ public class PathTuner extends OpModeEX {
         if (v < eps || t > BRAKE_MAX_TIME) {
             double v0 = 0;
             for (double[] s : brakeSamples) if (s[1] > v0) v0 = s[1];
-            brakeDecel[axIdx] = -slope(brakeSamples, 0.15 * v0, 0.85 * v0);
+            double d = -slope(brakeSamples, 0.15 * v0, 0.85 * v0);
+            if (!(d > 1)) d = chordDecel(brakeSamples, v0);
+            if (d > 1) brakeDecel[axIdx] = d;
             buildReturnPath();
             state = State.MAXVA_RETURN;
             phaseTimer.reset();
         }
+    }
+
+    /** Average decel between the 90 % and 10 % speed points - used when there
+     *  are too few samples for the regression. */
+    private static double chordDecel(java.util.List<double[]> pts, double v0) {
+        double[] a = null, b = null;
+        for (double[] s : pts) {
+            if (a == null && s[1] <= 0.9 * v0) a = s;
+            if (a != null && s[1] >= 0.1 * v0) b = s;
+        }
+        if (a == null || b == null || b[0] - a[0] < 0.02) return 0;
+        return (a[1] - b[1]) / (b[0] - a[0]);
     }
 
     /** Speed per unit power above breakaway; the fitted asymptote is used when
@@ -640,9 +677,9 @@ public class PathTuner extends OpModeEX {
         if (maxV[f] > 1) PathingValues.SPEED_PER_POWER_FWD = speedPerPower(f);
         if (maxV[st] > 1) PathingValues.SPEED_PER_POWER_STR = speedPerPower(st);
         if (maxV[tu] > 1) PathingValues.SPEED_PER_POWER_TURN = speedPerPower(tu);
-        if (stepV[f] > 1) PathingValues.TAU_FWD = stepTau[f];
-        if (stepV[st] > 1) PathingValues.TAU_STR = stepTau[st];
-        if (stepV[tu] > 1) PathingValues.TAU_TURN = stepTau[tu];
+        if (stepV[f] > 1) PathingValues.TAU_FWD = clamp(stepTau[f], TAU_MIN, TAU_MAX);
+        if (stepV[st] > 1) PathingValues.TAU_STR = clamp(stepTau[st], TAU_MIN, TAU_MAX);
+        if (stepV[tu] > 1) PathingValues.TAU_TURN = clamp(stepTau[tu], TAU_MIN, TAU_MAX);
         double dSum = 0;
         int dN = 0;
         for (int i : new int[]{f, st}) if (stepV[i] > 1) { dSum += stepDelay[i]; dN++; }
@@ -738,8 +775,10 @@ public class PathTuner extends OpModeEX {
         searching = true;
         evals.clear();
         stage = Stage.TS;
-        gsA = Math.log(sIdx == 2 ? TS_LO_H : KEND_LO);
-        gsB = Math.log(sIdx == 2 ? TS_HI_H : KEND_HI);
+        double kHi = Math.min(KEND_HI, 1.25 * Follower.kEndLimit(PathingValues.DELAY, loopDt));
+        double kLo = Math.min(KEND_LO, kHi / 3);
+        gsA = Math.log(sIdx == 2 ? TS_LO_H : kLo);
+        gsB = Math.log(sIdx == 2 ? TS_HI_H : kHi);
         gsC = gsB - GOLD * (gsB - gsA);
         gsD = gsA + GOLD * (gsB - gsA);
         gsFc = Double.NaN;
@@ -908,11 +947,15 @@ public class PathTuner extends OpModeEX {
     private double runCost() {
         if (tr.leftBox) return COST_LEFT_BOX;
         return costInt + costLastF * Math.max(0, COST_HORIZON - costLastT) + W_TWITCH * reversals
-                + W_CHATTER * chatter;
+                + W_CHATTER * chatter + costOff;
     }
 
     private double penalty(double err) {
-        double r = err / (probeIsHeading() ? BALANCE_H : BALANCE_T);
+        return softPenalty(err, probeIsHeading() ? BALANCE_H : BALANCE_T);
+    }
+
+    private static double softPenalty(double err, double balance) {
+        double r = err / balance;
         return 1 - Math.exp(-r * r);
     }
 
@@ -1042,6 +1085,8 @@ public class PathTuner extends OpModeEX {
         lastVelSign = 0;
         chatter = 0;
         chatterLast = Double.NaN;
+        costOff = 0;
+        lastOffT = 0;
         costInt = 0;
         costLastT = 0;
         costLastF = penalty(probeErr());
@@ -1088,9 +1133,21 @@ public class PathTuner extends OpModeEX {
             if (!Double.isNaN(tCoarse) && lastVelSign != 0 && sgn != lastVelSign) reversals++;
             lastVelSign = sgn;
         }
-        double c = sIdx == 0 ? cmdF : sIdx == 1 ? cmdS : cmdT;
-        if (!Double.isNaN(tCoarse) && !Double.isNaN(chatterLast)) chatter += Math.abs(c - chatterLast);
-        chatterLast = c;
+        // the shudder lived on the axis NOT being probed, so score the whole
+        // robot: chatter on every command, plus sideways / heading error
+        if (!Double.isNaN(tCoarse) && !Double.isNaN(chatterLast)) {
+            chatter += Math.abs(cmdF - lastCmdF) + Math.abs(cmdS - lastCmdS) + Math.abs(cmdT - lastCmdT);
+        }
+        chatterLast = 0;
+        lastCmdF = cmdF;
+        lastCmdS = cmdS;
+        lastCmdT = cmdT;
+        double rx = odometry.X() - startX, ry = odometry.Y() - startY;
+        double side = Math.abs(rx * dirY - ry * dirX);
+        double offPen = softPenalty(side, BALANCE_T);
+        if (!hdg) offPen += softPenalty(Math.abs(wrap180(targetHeading - odometry.Heading())), BALANCE_H);
+        costOff += W_OFF_AXIS * offPen * Math.max(0, t - lastOffT);
+        lastOffT = t;
     }
 
     private void runPath(boolean skip) {
@@ -1238,10 +1295,17 @@ public class PathTuner extends OpModeEX {
         rebuildReturnPath();
     }
 
+    private double homeX = CX, homeY = CY;
+
+    private void setHome(double x, double y) {
+        homeX = x;
+        homeY = y;
+    }
+
     private void rebuildReturnPath() {
         final Vector2D[] pts = new Vector2D[]{
                 new Vector2D(odometry.X(), odometry.Y()),
-                new Vector2D(CX, CY)
+                new Vector2D(homeX, homeY)
         };
         SectionBuilder[] section = new SectionBuilder[]{ () -> addPts(pts) };
         paths.addNewPath("backPath");
@@ -1258,7 +1322,7 @@ public class PathTuner extends OpModeEX {
         drive(safeFollow, 0);
         boolean stopped = Math.hypot(odometry.getXVelocity(), odometry.getYVelocity()) < stopEpsT;
         boolean home = safeFollow.isFinished(8, 8);
-        double distHome = Math.hypot(odometry.X() - CX, odometry.Y() - CY);
+        double distHome = Math.hypot(odometry.X() - homeX, odometry.Y() - homeY);
         if (home && stopped) {
             stopDrive();
             return true;

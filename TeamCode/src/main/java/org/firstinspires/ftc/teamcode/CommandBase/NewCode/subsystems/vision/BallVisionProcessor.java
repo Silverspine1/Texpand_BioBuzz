@@ -59,7 +59,10 @@ public class BallVisionProcessor implements VisionProcessor, CameraStreamSource 
     private volatile Result latest;
     private long seq = 0, lastNanos = 0;
     private double fpsEma = 0;
-    private volatile double[] lastHsvSample = null;
+    private volatile double[] lastHsvSample = null;      // ball-coloured pixels only (what A uses)
+    private volatile double[] centerRawHsv = null;        // every pixel of the box, always set
+    /** Half-size (px, in the processed image) of the centre sampling box. Tunable from the dashboard. */
+    public static int CENTER_BOX_PX = 6;
     private int rawW = 640, rawH = 480;
 
     private final AtomicReference<Bitmap> lastFrame =
@@ -93,6 +96,11 @@ public class BallVisionProcessor implements VisionProcessor, CameraStreamSource 
     /** Median HSV (excluding dark holes) of a small box at the image centre, or null. Used by the Vision Tuner. */
     public double[] sampleCenterHsv() {
         return lastHsvSample;
+    }
+
+    /** Median HSV of EVERY pixel in the centre box (floor, holes and all), or null before the first frame. */
+    public double[] centerRawHsv() {
+        return centerRawHsv;
     }
 
     @Override
@@ -143,12 +151,19 @@ public class BallVisionProcessor implements VisionProcessor, CameraStreamSource 
     }
 
     private void sampleCentre() {
-        int cx = hsv.cols() / 2, cy = hsv.rows() / 2, n = 6;
+        int cx = hsv.cols() / 2, cy = hsv.rows() / 2, n = Math.max(2, Math.min(CENTER_BOX_PX, Math.min(cx, cy) - 1));
         Rect box = new Rect(cx - n, cy - n, 2 * n, 2 * n);
         Mat sub = hsv.submat(box);
         byte[] data = new byte[sub.cols() * sub.rows() * 3];
         sub.get(0, 0, data);
         sub.release();
+        List<Integer> ah = new ArrayList<>(), as = new ArrayList<>(), av = new ArrayList<>();
+        for (int i = 0; i + 2 < data.length; i += 3) {
+            ah.add(data[i] & 0xFF); as.add(data[i + 1] & 0xFF); av.add(data[i + 2] & 0xFF);
+        }
+        Collections.sort(ah); Collections.sort(as); Collections.sort(av);
+        int am = ah.size() / 2;
+        centerRawHsv = ah.isEmpty() ? null : new double[]{ah.get(am), as.get(am), av.get(am)};
         List<Integer> hs = new ArrayList<>(), ss = new ArrayList<>(), vs = new ArrayList<>();
         for (int i = 0; i + 2 < data.length; i += 3) {
             int hh = data[i] & 0xFF, s = data[i + 1] & 0xFF, vv = data[i + 2] & 0xFF;
@@ -199,6 +214,23 @@ public class BallVisionProcessor implements VisionProcessor, CameraStreamSource 
             String t = String.format(Locale.US, "#%d %.0fcm %+.0f", i, d.rangeCm(), d.bearingDeg());
             Imgproc.putText(overlay, t, new Point(Math.max(c.x - d.radiusPx * s, 0), Math.max(c.y - d.radiusPx * s - 4, 12)),
                     Imgproc.FONT_HERSHEY_SIMPLEX, 0.42, white, 1);
+        }
+        // centre sampling box + the colour under it, so the HSV can be read straight off the picture
+        int bx = Math.max(2, Math.min(CENTER_BOX_PX, Math.min(w, h) / 2 - 1));
+        Point b0 = new Point((w / 2 - bx) * s, (h / 2 - bx) * s), b1 = new Point((w / 2 + bx) * s, (h / 2 + bx) * s);
+        double[] raw = centerRawHsv;
+        boolean inWin = raw != null && raw[0] >= VisionSubsystem.H_LOW && raw[0] <= VisionSubsystem.H_HIGH
+                && raw[1] >= VisionSubsystem.S_LOW && raw[1] <= VisionSubsystem.S_HIGH
+                && raw[2] >= VisionSubsystem.V_LOW && raw[2] <= VisionSubsystem.V_HIGH;
+        Scalar boxCol = inWin ? green : new Scalar(255, 80, 80, 255);
+        Imgproc.rectangle(overlay, b0, b1, boxCol, 2);
+        Imgproc.line(overlay, new Point(w / 2 * s - 6, h / 2 * s), new Point(w / 2 * s + 6, h / 2 * s), boxCol, 1);
+        Imgproc.line(overlay, new Point(w / 2 * s, h / 2 * s - 6), new Point(w / 2 * s, h / 2 * s + 6), boxCol, 1);
+        if (raw != null) {
+            Imgproc.putText(overlay, String.format(Locale.US, "HSV %.0f / %.0f / %.0f  %s", raw[0], raw[1], raw[2],
+                    inWin ? "IN window" : "outside window"),
+                    new Point(Math.max(b0.x - 40, 4), Math.min(b1.y + 16, overlay.rows() - 6)),
+                    Imgproc.FONT_HERSHEY_SIMPLEX, 0.5, boxCol, 1);
         }
         Imgproc.putText(overlay, String.format(Locale.US, "%.0f fps  %d balls  view %d", fpsEma, dets.size(), view),
                 new Point(6, 16), Imgproc.FONT_HERSHEY_SIMPLEX, 0.5, white, 1);

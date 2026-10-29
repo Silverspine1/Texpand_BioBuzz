@@ -110,8 +110,19 @@ public class VisionTuner extends LinearOpMode {
             telemetry.addData("FOV / tilt / height", "%.1f deg / %.1f deg / %.1f cm", params.hfovDeg, params.camPitchDownDeg, params.camHeightCm);
             telemetry.addData("HSV window", "H %.0f-%.0f  S %.0f-%.0f  V %.0f-%.0f", VisionSubsystem.H_LOW, VisionSubsystem.H_HIGH,
                     VisionSubsystem.S_LOW, VisionSubsystem.S_HIGH, VisionSubsystem.V_LOW, VisionSubsystem.V_HIGH);
+            double[] raw = proc.centerRawHsv();
+            if (raw == null) {
+                telemetry.addData("centre HSV", "no frame yet");
+            } else {
+                boolean in = raw[0] >= VisionSubsystem.H_LOW && raw[0] <= VisionSubsystem.H_HIGH
+                        && raw[1] >= VisionSubsystem.S_LOW && raw[1] <= VisionSubsystem.S_HIGH
+                        && raw[2] >= VisionSubsystem.V_LOW && raw[2] <= VisionSubsystem.V_HIGH;
+                telemetry.addData("centre HSV (box median)", "H %.0f  S %.0f  V %.0f   -> %s the window",
+                        raw[0], raw[1], raw[2], in ? "INSIDE" : "OUTSIDE");
+            }
             double[] s = proc.sampleCenterHsv();
-            telemetry.addData("centre colour (HSV)", s == null ? "no ball colour in the centre box" : String.format("%.0f / %.0f / %.0f", s[0], s[1], s[2]));
+            telemetry.addData("centre ball colour (A uses this)", s == null ? "box is not on a ball (too dark / grey)"
+                    : String.format("%.0f / %.0f / %.0f", s[0], s[1], s[2]));
             telemetry.addData("status", status);
             if (r != null) {
                 telemetry.addData("balls seen", r.detections.size());
