@@ -81,6 +81,9 @@ public class PathTuner extends OpModeEX {
     private static final double RETURN_TIMEOUT  = 6.0;   // s per return attempt
     private static final int    RETURN_RETRIES  = 3;     // rebuild+retry if not home
     private static final double HOME_OK_DIST    = 30;    // cm - close enough to start a path
+    private static final double HOME_HDG_OK     = 8;     // deg - "home" also means facing 0 again
+    private static final double HOME_RATE_OK    = 20;    // deg/s - and no longer turning
+    private static final double SPIN_BOX_MARGIN = 20;    // cm - the turn test stops if it drifts this close to the edge
     private static final int    SETTLE_N        = 5;     // consecutive in-zone+stopped samples
     private static final int    OVERSHOOT_N     = 4;     // consecutive past-tol samples = real
     private static final double SAMPLE_DT_MIN   = 0.005;  // ~every loop
@@ -534,7 +537,9 @@ public class PathTuner extends OpModeEX {
         double t = phaseTimer.seconds();
         // stop pushing while there is still room to stop on BRAKE alone
         boolean boxHit = false;
-        if (Ax.values()[axIdx] != Ax.TURN) {
+        if (Ax.values()[axIdx] == Ax.TURN) {
+            boxHit = outsideBox(SPIN_BOX_MARGIN);    // spinning drifts with any side imbalance
+        } else {
             double v = Math.hypot(odometry.getXVelocity(), odometry.getYVelocity());
             double decel = brakeDecel[axIdx] > 1 ? brakeDecel[axIdx] : BRAKE_GUESS;
             boxHit = outsideBox(Math.min(areaSize / 2 - 5, v * v / (2 * decel) + 8));
@@ -1433,7 +1438,11 @@ public class PathTuner extends OpModeEX {
     private boolean returnHome() {
         drive(safeFollow, 0);
         boolean stopped = Math.hypot(odometry.getXVelocity(), odometry.getYVelocity()) < stopEpsT;
-        boolean home = safeFollow.isFinished(8, 8);
+        // heading too: after the full-power turn test the robot is already
+        // within 8 cm, so without this "home" was instant and the next run
+        // started from whatever heading the spin ended on
+        boolean home = safeFollow.isFinished(8, 8)
+                && Math.abs(wrap180(odometry.Heading())) < HOME_HDG_OK && Math.abs(degPerSec()) < HOME_RATE_OK;
         double distHome = Math.hypot(odometry.X() - homeX, odometry.Y() - homeY);
         if (home && stopped) {
             stopDrive();

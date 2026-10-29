@@ -204,6 +204,15 @@ public class Follower extends FollowerBaseMethods {
         }
         double lead = config.delay + dt;
         double px = X + 0.5 * (XV + vxP) * lead, py = Y + 0.5 * (YV + vyP) * lead;
+
+        // The robot will be facing hP when this command acts: aim the
+        // robot-frame command with that heading. With the current heading a
+        // fast turn bends the path (36 deg of error at 600 deg/s and 60 ms).
+        double hA = Math.toRadians(hP);
+        double sinA = Math.sin(hA), cosA = Math.cos(hA);
+        double mfA = disableGlobalFollowing ? mfP : vyP * sinA + vxP * cosA;
+        double msA = disableGlobalFollowing ? msP : vyP * cosA - vxP * sinA;
+        double omega = disableGlobalFollowing ? 0 : Math.toRadians(hvP);
         int idx = fresh ? pathoperator.resetClosest(px, py) : pathoperator.closestIndex(px, py);
         fresh = false;
         currentIndex = idx;
@@ -245,7 +254,7 @@ public class Follower extends FollowerBaseMethods {
             double r = Math.hypot(dx, dy);
             if (r > 1e-6) {
                 double ux = dx / r, uy = dy / r;
-                double[] va = profile(r, ux, uy, Double.MAX_VALUE, vxP * ux + vyP * uy, sin, cos);
+                double[] va = profile(r, ux, uy, Double.MAX_VALUE, vxP * ux + vyP * uy, sinA, cosA);
                 lastVTarget = va[0];
                 vx = ux * va[0];
                 vy = uy * va[0];
@@ -264,11 +273,11 @@ public class Follower extends FollowerBaseMethods {
             // hand-over to settling reverses a still-moving command (a jolt)
             double r = sRem + config.overshoot * clamp(sRem / OVERSHOOT_FADE, 0, 1);
             double vAlong = vxP * tx + vyP * ty;
-            double[] va = profile(r, tx, ty, pathoperator.cornerSpeed(idx), vAlong, sin, cos);
+            double[] va = profile(r, tx, ty, pathoperator.cornerSpeed(idx), vAlong, sinA, cosA);
             lastVTarget = va[0];
 
             double cx = -(ox - along * tx), cy = -(oy - along * ty);
-            double cmax = dirMaxSpeed(cx, cy, sin, cos);
+            double cmax = dirMaxSpeed(cx, cy, sinA, cosA);
             double cMag = Math.hypot(cx, cy) * config.kCross;
             double cs = cMag > cmax && cMag > 1e-9 ? cmax / cMag : 1;
 
@@ -287,13 +296,15 @@ public class Follower extends FollowerBaseMethods {
             if (disableGlobalFollowing) {
                 vf = vx; vs = vy; af = ax; as = ay;
             } else {
-                vf = vy * sin + vx * cos;
-                vs = vy * cos - vx * sin;
-                af = ay * sin + ax * cos;
-                as = ay * cos - ax * sin;
+                vf = vy * sinA + vx * cosA;
+                vs = vy * cosA - vx * sinA;
+                // while turning, a steady field velocity rotates in the robot
+                // frame (df/dt = w*s, ds/dt = -w*f): the wheels must make that
+                af = ay * sinA + ax * cosA + omega * vs;
+                as = ay * cosA - ax * sinA - omega * vf;
             }
-            pf = axisPower(vf, af, mfP, config.speedPerPowerFwd, config.tauFwd, config.velGainFwd);
-            ps = axisPower(vs, as, msP, config.speedPerPowerStr, config.tauStr, config.velGainStr);
+            pf = axisPower(vf, af, mfA, config.speedPerPowerFwd, config.tauFwd, config.velGainFwd);
+            ps = axisPower(vs, as, msA, config.speedPerPowerStr, config.tauStr, config.velGainStr);
             double vmag = Math.hypot(vf, vs);
             if (vmag > 1e-6) {
                 double k = ksFade * Math.tanh(vmag / KS_SPEED) / vmag;
