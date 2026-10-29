@@ -11,6 +11,7 @@ import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.inta
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Localisation.Odometry;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathLog;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.vision.VisionSubsystem;
 
 import dev.weaponboy.nexus_command_base.OpmodeEX.Scheduler;
 import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
@@ -24,13 +25,15 @@ public abstract class OpModeEX extends OpMode {
     public Transfer transfer = new Transfer(this);
     public ShooterController shooterController = new ShooterController(this);
     public DriveBase driveBase = new DriveBase(this);
+    /** Vision collect (camera + ball map + path to the balls). Opens the camera only when vision.enable() is called. */
+    public VisionSubsystem vision = new VisionSubsystem(this);
 
 
 
 
 
     private final Scheduler scheduler = new Scheduler(this,
-            new SubSystem[] {odometry,transfer,IntakeHardware,shooterController,driveBase});
+            new SubSystem[] {odometry,transfer,IntakeHardware,shooterController,driveBase,vision});
 
     List<LynxModule> allHubs;
 

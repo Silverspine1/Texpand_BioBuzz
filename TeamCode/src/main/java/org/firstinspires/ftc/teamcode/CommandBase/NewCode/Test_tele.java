@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode.CommandBase.NewCode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingUtility.RobotPower;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware_doubleBot;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.AxonEncoder;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.SetTurretAngle;
@@ -10,6 +11,7 @@ import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.Sho
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.TurretDebugMode;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.Shotplanner;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.TurretTune;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.vision.VisionSubsystem;
 import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
 @TeleOp
 public class Test_tele extends OpModeEX {
@@ -63,11 +65,33 @@ public class Test_tele extends OpModeEX {
             tuneStatus = "loaded saved tune";
         }
         odometry.setPose(ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg);
+        vision.enable();   // opens the camera for the vision collect button (gamepad1 START)
     }
 
     @Override
     public void loopEX() {
         Loop.reset();
+
+        // ---- VISION COLLECT: gamepad1 START toggles it. It drives the chassis along the fastest path that sweeps the
+        // balls into the intake and holds the intake on; it never touches the turret / flywheel / shooting.
+        // It ignores where it ends up (VisionSubsystem.CONSIDER_END_POSITION is off). Any driver input cancels it.
+        if (!lastGamepad1.start && currentGamepad1.start) {
+            if (vision.isCollecting()) vision.stopCollect(); else vision.startCollect();
+        }
+        if (vision.isCollecting() && (Math.abs(gamepad1.right_stick_y) > VisionSubsystem.DRIVER_OVERRIDE_STICK
+                || Math.abs(gamepad1.right_stick_x) > VisionSubsystem.DRIVER_OVERRIDE_STICK
+                || gamepad1.left_trigger > 0.2 || gamepad1.right_trigger > 0.2
+                || gamepad1.right_bumper || gamepad1.left_bumper)) {
+            vision.stopCollect();
+        }
+
+        if (vision.isCollecting()) {
+            RobotPower visionPower = vision.getDrivePower();
+            if (visionPower != null) driveBase.drivePowers(visionPower);
+            else driveBase.drivePowers(0, 0, 0);
+            IntakeHardware.Vertical = 1;
+            IntakeHardware.State = intakeHardware_doubleBot.intakeState.intaking;
+        } else {
         driveBase.drivePowers(gamepad1.right_stick_y,-gamepad1.right_stick_x,(gamepad1.left_trigger- gamepad1.right_trigger));
         IntakeHardware.Vertical = driveBase.vertical;
         if (gamepad1.right_bumper){
@@ -81,6 +105,7 @@ public class Test_tele extends OpModeEX {
             IntakeHardware.State = intakeHardware_doubleBot.intakeState.off;
 
 
+        }
         }        if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up) {
             shooterController.targeting = !shooterController.targeting;
             if (shooterController.targeting) {
@@ -119,6 +144,8 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("Heading dir check", headingVerdict);
         telemetry.addData("pose (R-stick btn sets)", "%.0f, %.0f cm @ %.0f deg  %s",
                 ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg, poseStatus);
+
+        vision.addTelemetry(telemetry);
 
         telemetry.addLine("=== TURRET ENCODER ===");
         telemetry.addData("voltage (V)", "%.3f", encoder.getVoltage());
