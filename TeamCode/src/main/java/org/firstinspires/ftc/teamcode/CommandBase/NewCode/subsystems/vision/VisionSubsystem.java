@@ -469,7 +469,7 @@ public class VisionSubsystem extends SubSystem {
         }
         noTargetS = 0;
         double target = CollectPlanner.headingTarget(plan, pose[0], pose[1], leg);
-        drivePower = follow.followPathAuto(target, pose[2], pose[0], pose[1], vx, vy);
+        drivePower = follow.followPathAuto(target, pose[2], pose[0], pose[1], vx, vy, op.odometry.getHeadingVelocityDeg());
         double[] end = plan.end();
         double endErr = Math.hypot(end[0] - pose[0], end[1] - pose[1]);
         stallS = (speed < 6.0 && now - planStartS > 0.5) ? stallS + tickDt : 0;

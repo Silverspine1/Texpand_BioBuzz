@@ -127,9 +127,10 @@ public class Follower extends FollowerBaseMethods {
         slowLoops = 0;
         heldH = false;
         slowLoopsH = 0;
-        prevH = Double.NaN;
-        lastNanos = 0;
-        histN = 0;
+        // heading-rate estimate, loop timing and the in-flight command history
+        // describe the ROBOT, not the path: keep them, so re-planning mid-drive
+        // (vision collect re-plans every 0.25 s) does not jolt the predictor.
+        // They reset themselves after a gap in calls.
         fresh = true;
         PathLog.newRun();
     }
@@ -144,7 +145,11 @@ public class Follower extends FollowerBaseMethods {
     public RobotPower followPathAuto(double targetHeading, double H, double X, double Y, double XV, double YV, double HV) {
         long now = clock.nanos();
         double gap = lastNanos == 0 ? 0.02 : (now - lastNanos) / 1e9;
-        if (gap > 0.2) prevH = Double.NaN;
+        if (gap > 0.2) {
+            prevH = Double.NaN;
+            hvEst = 0;
+            histN = 0;
+        }
         double dt = clamp(gap, 0.002, 0.1);
         loopDt += 0.1 * (dt - loopDt);
         lastNanos = now;
