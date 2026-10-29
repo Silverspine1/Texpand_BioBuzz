@@ -9,34 +9,19 @@ import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Local
 import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
 
 import dev.weaponboy.nexus_command_base.Commands.Execute;
-import dev.weaponboy.nexus_pathing.Follower.Follower;
-import dev.weaponboy.nexus_pathing.Follower.FollowerPrimer;
-import dev.weaponboy.nexus_pathing.PathGeneration.PathsManager;
-import dev.weaponboy.nexus_pathing.PathGeneration.commands.SectionBuilder;
-import dev.weaponboy.nexus_pathing.PathingUtility.RobotPower;
-import dev.weaponboy.nexus_pathing.RobotUtilities.RobotConfig;
-import dev.weaponboy.nexus_pathing.RobotUtilities.Vector2D;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.Follower.Follower;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathGeneration.PathsManager;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathGeneration.commands.SectionBuilder;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingUtility.RobotPower;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.RobotUtilities.RobotConfig;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.RobotUtilities.Vector2D;
 
 
 @TeleOp(name = "Direction Test", group = "test")
 public class DirectionTest extends OpModeEX {
 
-    PathsManager paths = new PathsManager(new RobotConfig()
-            .setXLastAdjustmentPD(0.02, 0.004)
-            .setYLastAdjustmentPD(0.02, 0.009)
-            .setXOnPathPD(0.08, 0.004)
-            .setYOnPathPD(0.2, 0.004)
-            .setFastHeadingPD(0.01, 0.0005)
-            .setSlowHeadingPD(0.012, 0.002)
-            .setRobotConstants(130, 181, 650, 700));
-    Follower follow = new Follower(new RobotConfig()
-            .setXLastAdjustmentPD(0.02, 0.004)
-            .setYLastAdjustmentPD(0.02, 0.009)
-            .setXOnPathPD(0.08, 0.004)
-            .setYOnPathPD(0.2, 0.004)
-            .setFastHeadingPD(0.01, 0.0005)
-            .setSlowHeadingPD(0.012, 0.002)
-            .setRobotConstants(130, 181, 650, 700));
+    PathsManager paths = new PathsManager(new RobotConfig());
+    Follower follow = new Follower(new RobotConfig());
 
     private static final double POWER = 0.3;
     private RobotConfig genConfig;
@@ -57,7 +42,6 @@ public class DirectionTest extends OpModeEX {
 
     @Override
     public void loopEX() {
-        follow.setPath(paths.returnPath("shoot"));
 
 
         double vertical = 0;
@@ -86,6 +70,7 @@ public class DirectionTest extends OpModeEX {
         }
         if (!pathing && gamepad1.leftBumperWasPressed()){
             pathing = true;
+            follow.setPath(paths.returnPath("shoot"));
         }else if (pathing && gamepad1.leftBumperWasPressed()){
                 pathing = false;
             }
@@ -102,7 +87,7 @@ if (!pathing) {
         telemetry.addData("Velocity X (cm/s)", odometry.getXVelocity());
         telemetry.addData("Velocity Y (cm/s)", odometry.getYVelocity());
         if (pathing) {
-            RobotPower cp = FollowerPrimer.follow(follow, heading, 1.25, 0,odometry.Heading(), odometry.X(), odometry.Y(), odometry.getXVelocity(), odometry.getYVelocity());
+            RobotPower cp = follow.followPathAuto(heading, odometry.Heading(), odometry.X(), odometry.Y(), odometry.getXVelocity(), odometry.getYVelocity());
             driveBase.queueCommand(driveBase.drivePowers(cp));
         }
     }

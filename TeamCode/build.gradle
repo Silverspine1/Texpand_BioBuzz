@@ -31,7 +31,6 @@ repositories {
 
 dependencies {
     implementation project(':FtcRobotController')
-    implementation 'com.github.Weaponboy:Nexus_Pathing:v3.8.6'
     implementation('com.acmerobotics.dashboard:dashboard:0.5.1') {
         exclude group: 'org.firstinspires.ftc'
     }

@@ -12,8 +12,9 @@ import dev.weaponboy.nexus_command_base.Commands.LambdaCommand;
 import dev.weaponboy.nexus_command_base.Hardware.MotorEx;
 import dev.weaponboy.nexus_command_base.Hardware.ServoDegrees;
 import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
-import dev.weaponboy.nexus_pathing.PathingUtility.PIDController;
-import dev.weaponboy.nexus_pathing.PathingUtility.RobotPower;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingValues;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingUtility.PIDController;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingUtility.RobotPower;
 
 public class DriveBase extends SubSystem {
 
@@ -31,20 +32,14 @@ public class DriveBase extends SubSystem {
     // Direct-drive (bare motor) protection. Per wheel, current ~ (power - speed)
     // as fractions of stall current / free speed. While a wheel is being slowed
     // (current against its motion) that braking current ramps up at
-    // brakeCurrentRate and is capped at brakeCurrentMax - so no shock, even
-    // from a 0-power BRAKE at full speed, yet the wheel decelerates at constant
-    // current (much faster than passive BRAKE, whose current dies with speed).
-    // Driving current and a stopped wheel are not limited.
+    // PathingValues.BRAKE_CURRENT_RATE and is capped at BRAKE_CURRENT_MAX - so
+    // no shock, even from a 0-power BRAKE at full speed, yet the wheel
+    // decelerates at constant current (much faster than passive BRAKE, whose
+    // current dies with speed). Driving current and a stopped wheel are not
+    // limited. Wheel speed is estimated with PathingValues.SPEED_PER_POWER_*.
     public boolean protectReversal = true;
-    public double brakeCurrentMax = 0.8;     // fraction of stall current
-    public double brakeCurrentRate = 15;     // stall fractions per second
     private final double[] brakeI = new double[4];
     private long lastShapeNanos = 0;
-    // Full-power speeds used to estimate wheel speed from odometry. Lower = more
-    // conservative. PathTuner overwrites these with measured values.
-    public double fullSpeedFwd = 180;       // cm/s
-    public double fullSpeedStr = 140;       // cm/s
-    public double fullSpeedTurn = 400;      // deg/s
     public boolean odoVelocityRobotFrame = false;
     private final double[] wheelSpeed = new double[4];   // LF, RF, LB, RB fraction of full speed
 
@@ -69,6 +64,7 @@ public class DriveBase extends SubSystem {
         RF.initMotor("RF", getOpMode().hardwareMap);
         LB.initMotor("LB", getOpMode().hardwareMap);
         RB.initMotor("RB", getOpMode().hardwareMap);
+        PathingValues.ensureLoaded();
 
 
 
@@ -152,9 +148,9 @@ public class DriveBase extends SubSystem {
             fwd = vy * Math.sin(h) + vx * Math.cos(h);
             str = vy * Math.cos(h) - vx * Math.sin(h);
         }
-        double wf = fwd / fullSpeedFwd;
-        double ws = str / fullSpeedStr;
-        double wt = op.odometry.getHeadingVelocityDeg() / fullSpeedTurn;
+        double wf = fwd / Math.max(1, PathingValues.SPEED_PER_POWER_FWD);
+        double ws = str / Math.max(1, PathingValues.SPEED_PER_POWER_STR);
+        double wt = op.odometry.getHeadingVelocityDeg() / Math.max(1, PathingValues.SPEED_PER_POWER_TURN);
         wheelSpeed[0] = wf + ws + wt;
         wheelSpeed[1] = wf - ws - wt;
         wheelSpeed[2] = wf - ws + wt;
@@ -162,14 +158,15 @@ public class DriveBase extends SubSystem {
     }
 
     private double shapeBraking(int k, double cmd, double w, double dt) {
+        w = Math.max(-1, Math.min(1, w));
         double i = cmd - w;
         if (Math.abs(w) < 0.02 || i * w >= 0) {
             brakeI[k] = 0;
             return cmd;
         }
-        double mag = Math.min(Math.abs(i), Math.min(brakeCurrentMax, brakeI[k] + brakeCurrentRate * dt));
+        double mag = Math.min(Math.abs(i), Math.min(PathingValues.BRAKE_CURRENT_MAX, brakeI[k] + PathingValues.BRAKE_CURRENT_RATE * dt));
         brakeI[k] = mag;
-        return w - Math.signum(w) * mag;
+        return Math.max(-1, Math.min(1, w - Math.signum(w) * mag));
     }
 
     /** Largest |wheel speed| fraction right now (for telemetry / tuning). */

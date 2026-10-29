@@ -1,160 +1,76 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Follower;
 
 /**
- * Model-based PD gain computation. Everything here is driven by on-robot
- * measurements made by PathTuner - there are no hand-set numbers.
+ * Heading PD gains from measurement, plus the stop tolerances PathTuner uses.
+ * (Translation no longer uses PD gains - the follower drives from the
+ * measured drive model; PathTuner tunes its kEnd / velGain directly.)
  *
- * Inputs (all measured):
- *   aFwd / aStr / aTurn - acceleration produced per unit motor power
- *                         (cm/s^2 per power, deg/s^2 per power for turn),
- *                         from a least-squares fit of the full-power ramp.
- *   ksFwd / ksStr / ksTurn - breakaway (static friction) power per axis,
- *                            from a slow power ramp until movement.
- *   tolX / tolY / tolH  - stop tolerances, derived from the stiction position
- *                         quantum (smallest reliable move), not hand-picked.
- *   ts / zeta / end     - per-axis stiffness, damping and endpoint softness,
- *                         chosen by PathTuner's cost-minimising search.
- *
- * Gain math - standard pole placement on the near-target 2nd-order loop
- *     error'' + A*Kd*error' + A*Kp*error = 0
- *     Kp = wn^2/A,  Kd = 2*zeta*wn/A,  wn = 4/(zeta*ts),  zeta = 1
- * with two fixes over the old version:
- *
- * 1. ANTI-TWITCH ENDPOINT CAP. Endpoint twitch is stick-slip: PD power below
- *    static friction leaves the robot stuck, error integrates nowhere, then a
- *    disturbance breaks it loose and it lurches. The cure is to guarantee that
- *    inside the tolerance box the commanded power stays BELOW breakaway, so
- *    the robot simply stays put once it is in tolerance:
- *        Kp_end <= kS / tol
- *    Endpoint Kp is min(pole-placement Kp, that cap).
- *
- * 2. DAMPING PRESERVED THROUGH CLAMPS. If Kp is capped/clamped, Kd is
- *    re-derived from the ACTUAL Kp so the pair stays critically damped:
- *        Kd = 2*zeta*sqrt(Kp/A)
- *    (The old code clamped Kp and Kd independently, which silently produced
- *    underdamped pairs - the source of the wobble.)
- *
- * Refs: Astrom & Murray, "Feedback Systems", ch.10 (PID / pole placement).
+ * Pole placement on the near-target loop  e'' + A*Kd*e' + A*Kp*e = 0:
+ *     Kp = wn^2/A,  Kd = 2*zeta*sqrt(Kp/A),  wn = 4/(zeta*ts)
+ * Kd is re-derived from the final Kp after any clamp, so the pair keeps its
+ * damping. Both PDs are then capped to a PM_MIN phase margin on the measured
+ * turn step response (delay is what made high heading gains limit-cycle).
+ * D is per SECOND.
  */
 public class ModelTuner {
 
-    // Measured accel-per-unit-power (regression over full-power ramp).
-    public double aFwd  = 0;   // robot Y, cm/s^2 per power
-    public double aStr  = 0;   // robot X, cm/s^2 per power
-    public double aTurn = 0;   // heading, deg/s^2 per power
+    public double aTurn = 0;                 // deg/s^2 per power (ramp regression)
+    public double ksFwd = 0, ksStr = 0, ksTurn = 0;
+    public double tolX = 2.0, tolY = 2.0, tolH = 2.0;   // cm, cm, deg
 
-    // Measured breakaway (static friction) power per axis, 0..1.
-    public double ksFwd  = 0;
-    public double ksStr  = 0;
-    public double ksTurn = 0;
+    public double tsH = 0.60, zetaH = 1.0, endH = 1.5;
 
-    // Derived stop tolerances (PathTuner computes these from the stiction
-    // position quantum; they are not user knobs).
-    public double tolX = 2.0;   // cm
-    public double tolY = 2.0;   // cm
-    public double tolH = 2.0;   // deg
-
-    // Per-axis shape parameters, driven by PathTuner's search.
-    //   ts   - on-path settling time (s); smaller = stiffer
-    //   zeta - damping ratio of the pole placement (1 = critical)
-    //   end  - endpoint settling time as a multiple of ts (bigger = softer hold)
-    public double tsX = 0.55, tsY = 0.55, tsH = 0.60;
-    public double zetaX = 1.0, zetaY = 1.0, zetaH = 1.0;
-    public double endX = 4.0 / 3.0, endY = 4.0 / 3.0, endH = 1.5;
-
-    // Measured turn step response (first order + dead time), per unit power:
-    // speed = turnV / (tauTurn*s + 1) * e^(-delayTurn*s). turnV <= 0 = unknown.
-    // Used to cap heading gains at a phase margin of PM_MIN - the delay is
-    // what turned high heading gains into a small, violent limit cycle.
+    // turn step response per unit power: turnV / (tauTurn*s + 1) * e^(-delayTurn*s)
     public double turnV = 0, tauTurn = 0.1, delayTurn = 0.03;
-    private static final double PM_MIN = 45;
-    public double pmFast = Double.NaN, pmSlow = Double.NaN;   // deg, after capping
-
-    // Measured control-loop period (s). Saved D gains are only valid at a
-    // similar loop time.
     public double loopDt = 0.02;
+    private static final double PM_MIN = 45;
+    public double pmFast = Double.NaN, pmSlow = Double.NaN;
 
-    // Hard sanity bounds only - real shaping comes from measurement.
     private static final double KP_MIN = 1e-4, KP_MAX = 1.0;
     private static final double KD_MAX = 0.5;
 
-    /**
-     * {Kp, Kd} for one axis (Kd per SECOND). If kpCap > 0 the proportional gain
-     * is limited to it (anti-twitch endpoint cap). Kd is always re-derived from
-     * the final Kp so the pair stays at the requested zeta no matter what clamped.
-     */
     public double[] pd(double A, double ts, double zeta, double kpCap, double kpFloor) {
-        if (A <= 1.0) A = 1.0;                    // degenerate measurement guard
+        if (A <= 1.0) A = 1.0;
         double wn = 4.0 / (zeta * ts);
         double kp = wn * wn / A;
         if (kpCap > 0 && kp > kpCap) kp = kpCap;
         if (kp < kpFloor) kp = kpFloor;
         kp = clamp(kp, KP_MIN, KP_MAX);
-        // damping for the ACTUAL kp: wn' = sqrt(kp*A), kd = 2*zeta*wn'/A
         double kd = clamp(2.0 * zeta * Math.sqrt(kp / A), 0, KD_MAX);
         return new double[]{kp, kd};
     }
 
-    /** Anti-twitch cap: power at the tolerance edge stays under breakaway. */
     private double endCap(double ks, double tol) {
-        if (ks <= 0 || tol <= 0) return 0;        // no measurement -> no cap
+        if (ks <= 0 || tol <= 0) return 0;
         return ks / tol;
     }
 
-    /** Floor so the loop can actually break static friction: at an error of
-     *  errScale the commanded power must reach breakaway, or the robot creeps
-     *  forever and every probe times out. */
     private double stictionFloor(double ks, double errScale) {
         if (ks <= 0 || errScale <= 0) return 0;
         return ks / errScale;
     }
 
-    /**
-     * Full 12-gain vector in PathTuner's order, D in Nexus per-loop units:
-     *  0,1 onPathX   2,3 onPathY   4,5 endX   6,7 endY   8,9 hdgFast   10,11 hdgSlow
-     */
-    public double[] gains() {
-        // on-path: power must reach breakaway within ~10cm/10deg of error
-        double[] px = pd(aFwd, tsX, zetaX, 0, stictionFloor(ksFwd, 10));
-        double[] py = pd(aStr, tsY, zetaY, 0, stictionFloor(ksStr, 10));
-        // endpoint: floor at 3x tolerance (still converges), cap at 1x
-        // tolerance (no stick-slip twitch inside the box)
-        double[] ex = pd(aFwd, tsX * endX, zetaX, endCap(ksFwd, tolX), stictionFloor(ksFwd, 3 * tolX));
-        double[] ey = pd(aStr, tsY * endY, zetaY, endCap(ksStr, tolY), stictionFloor(ksStr, 3 * tolY));
-        // The endpoint loop must NEVER be stiffer than the on-path loop - the
-        // follower switches to it near the path end, and a stiffer endpoint
-        // gain makes the robot visibly speed up right before the target.
-        ex = capToPath(ex, px, aFwd, zetaX);
-        ey = capToPath(ey, py, aStr, zetaY);
+    /** {fastP, fastD, slowP, slowD}, D per second. */
+    public double[] headingGains() {
         double[] hf = pd(aTurn, tsH, zetaH, 0, stictionFloor(ksTurn, 10));
         double[] hs = pd(aTurn, tsH * endH, zetaH, endCap(ksTurn, tolH), stictionFloor(ksTurn, 3 * tolH));
         hf = marginCap(hf, aTurn, zetaH);
-        hs = marginCap(capToPath(hs, hf, aTurn, zetaH), aTurn, zetaH);
+        hs = marginCap(capTo(hs, hf, aTurn, zetaH), aTurn, zetaH);
         pmFast = phaseMargin(hf[0], hf[1]);
         pmSlow = phaseMargin(hs[0], hs[1]);
-
-        // Nexus PIDs take D as kd * (error - previousError) PER LOOP, not per
-        // second, so the time-based Kd is divided by the loop period.
-        double k = 1.0 / Math.max(0.005, loopDt);
-        return new double[]{
-                px[0], px[1] * k, py[0], py[1] * k,
-                ex[0], ex[1] * k, ey[0], ey[1] * k,
-                hf[0], hf[1] * k, hs[0], hs[1] * k
-        };
+        return new double[]{hf[0], hf[1], hs[0], hs[1]};
     }
 
-    private double[] capToPath(double[] end, double[] path, double A, double zeta) {
-        if (end[0] <= path[0]) return end;
+    /** The soft PD must never be stiffer than the fast one. */
+    private double[] capTo(double[] soft, double[] fast, double A, double zeta) {
+        if (soft[0] <= fast[0]) return soft;
         if (A <= 1.0) A = 1.0;
-        double kp = path[0];
-        double kd = clamp(2.0 * zeta * Math.sqrt(kp / A), 0, KD_MAX);
-        return new double[]{kp, kd};
+        double kp = fast[0];
+        return new double[]{kp, clamp(2.0 * zeta * Math.sqrt(kp / A), 0, KD_MAX)};
     }
 
-    /** Lowers kp (kd re-derived, same zeta) until the heading loop has at
-     *  least PM_MIN phase margin on the measured plant. Overrides the stiction
-     *  floor: a loop that cannot be stable is worse than one that stops a
-     *  little short (the hold deadband deals with stiction). */
+    /** Lowers kp (kd re-derived) until the loop has PM_MIN phase margin.
+     *  Overrides the stiction floor - the kS feedforward handles friction. */
     private double[] marginCap(double[] g, double A, double zeta) {
         if (turnV <= 0) return g;
         if (A <= 1.0) A = 1.0;
@@ -166,8 +82,7 @@ public class ModelTuner {
         return new double[]{kp, kd};
     }
 
-    /** Phase margin (deg) of PD (kd per second) on turnV*e^(-sT)/(s(tau s+1)),
-     *  with T = measured delay + one loop (zero-order hold + backward-difference D). */
+    /** Phase margin (deg) of PD on turnV*e^(-sT)/(s(tau s+1)), T = delay + one loop. */
     public double phaseMargin(double kp, double kd) {
         if (turnV <= 0) return Double.NaN;
         double tau = Math.max(0.005, tauTurn), T = Math.max(0, delayTurn) + loopDt;

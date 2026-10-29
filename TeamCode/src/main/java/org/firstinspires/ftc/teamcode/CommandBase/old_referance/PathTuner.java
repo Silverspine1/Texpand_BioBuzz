@@ -10,12 +10,12 @@
 //import java.io.IOException;
 //
 //
-//import dev.weaponboy.nexus_pathing.Follower.Follower;
-//import dev.weaponboy.nexus_pathing.PathGeneration.PathsManager;
-//import dev.weaponboy.nexus_pathing.PathGeneration.commands.SectionBuilder;
-//import dev.weaponboy.nexus_pathing.PathingUtility.RobotPower;
-//import dev.weaponboy.nexus_pathing.RobotUtilities.RobotConfig;
-//import dev.weaponboy.nexus_pathing.RobotUtilities.Vector2D;
+//import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.Follower.Follower;
+//import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathGeneration.PathsManager;
+//import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathGeneration.commands.SectionBuilder;
+//import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingUtility.RobotPower;
+//import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.RobotUtilities.RobotConfig;
+//import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.RobotUtilities.Vector2D;
 //
 ///**
 // * Fully self-tuning path tuner. NOTHING to set - every threshold, tolerance

@@ -8,13 +8,13 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 
-import dev.weaponboy.nexus_pathing.Follower.Follower;
-import dev.weaponboy.nexus_pathing.Follower.FollowerPrimer;
-import dev.weaponboy.nexus_pathing.PathGeneration.PathsManager;
-import dev.weaponboy.nexus_pathing.PathGeneration.commands.SectionBuilder;
-import dev.weaponboy.nexus_pathing.PathingUtility.RobotPower;
-import dev.weaponboy.nexus_pathing.RobotUtilities.RobotConfig;
-import dev.weaponboy.nexus_pathing.RobotUtilities.Vector2D;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingValues;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.Follower.Follower;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathGeneration.PathsManager;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathGeneration.commands.SectionBuilder;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingUtility.RobotPower;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.RobotUtilities.RobotConfig;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.RobotUtilities.Vector2D;
 
 /**
  * Fully self-tuning path tuner. NOTHING to set - every threshold, tolerance
@@ -38,23 +38,22 @@ import dev.weaponboy.nexus_pathing.RobotUtilities.Vector2D;
  *                  accel/decel is capped to that, with margin.
  *                  Measured values are checked against the MIN/MAX speed and
  *                  accel bounds below (clamped if outside).
- *   4. SEARCH    - per axis, golden-section search on ln(ts) minimising a
- *                  run cost: time into a 5 cm / 5 deg zone, extra time to
- *                  settle in the fine tolerance, overshoot, and direction
- *                  reversals / zone exits (twitch) during a hold watch after
- *                  settling. 6 runs + 1 confirm per axis.
- *   5. VERIFY    - battery of paths with the locked gains, logged to CSV.
+ *   4. SEARCH    - per axis, minimising a run cost (time-weighted soft error,
+ *                  direction reversals and command chatter once in the area).
+ *                  Translation: golden section on the final-approach stiffness
+ *                  kEnd, then the speed-feedback gain. Heading: golden section
+ *                  on ts, then damping and endpoint softness. Then a confirm run.
+ *   5. VERIFY    - battery of paths with the locked values, logged to CSV.
  *
- * Gains come from pole placement at zeta=1 (see ModelTuner) - Kd is always
- * re-derived from the final Kp so clamping can never produce an underdamped
- * (wobbly) pair.
+ * Results go into the global PathingValues (and its file), which every
+ * new RobotConfig() starts from. Translation is driven from the measured
+ * drive model (speed per power, response time, delay, kS, brake decel) -
+ * see Pathing.Follower.Follower. Heading uses pole-placement PD (ModelTuner),
+ * capped to a safe phase margin on the measured turn response.
  *
- * OUTPUT MODE (Y button):
- *   AS TESTED  - saved values match what the robot did at the test power.
- *   FULL POWER - tune at e.g. 0.8 power for safety, but the saved gains and
- *                maxV/maxA are scaled to what the robot does at 1.0 power
- *                (friction-aware: speed ~ (power - kS)). Can be toggled any
- *                time, including after FINISHED (re-saves automatically).
+ * OUTPUT MODE (Y button): what POWER_LIMIT is saved as -
+ *   AS TESTED  - the test power;   FULL POWER - 1.0.
+ * The drive model is per unit power, so nothing else needs scaling.
  *
  * Place the robot mid-field (180,180) facing 0, dpad_up to start.
  * Outputs: /sdcard/FIRST/datalogs/tune_best.txt, tune_paths.csv.
@@ -102,6 +101,10 @@ public class PathTuner extends OpModeEX {
     //      endpoint softness (2 tries + parabola vertex each), then confirm ----
     private static final double TS_LO_T = 0.18, TS_HI_T = 1.2;
     private static final double TS_LO_H = 0.20, TS_HI_H = 1.4;
+    // translation: final-approach stiffness kEnd (1/s) and speed-feedback gain
+    private static final double KEND_LO = 5, KEND_HI = 40;
+    private static final double[] VG_TRY = {0.5, 2.0};
+    private static final double VG_LO = 0.25, VG_HI = 4;
     private static final int    GS_EVALS = 5;
     private static final double GOLD = 0.6180339887;
     private static final double[] ZETA_TRY = {0.7, 1.35};
@@ -122,23 +125,6 @@ public class PathTuner extends OpModeEX {
 
     // Output mode, toggled with Y: false = values as tested, true = scaled to full power
     private boolean fullPowerOutput = false;
-
-    // known-good gains ONLY for driving home between steps (never tuned/saved).
-    // Only used until the first axis is tuned; after that returns run on the
-    // tuned gains. Format: P, D pairs in the order
-    //   X on-path, Y on-path, X last-adjust, Y last-adjust, fast heading, slow heading
-    // (field X = robot forward, field Y = robot strafe (at heading 0))
-    // Cut for the faster 504 rpm drivetrain: translation /2, heading /3.
-    private static final double[] SAFE_GAINS = {
-            0.08,    0.004,      0.15,    0.003,      // X on-path, Y on-path
-            0.025,   0.004,      0.025,   0.007,      // X last-adjust, Y last-adjust
-            0.00667, 0.00033,    0.00667, 0.0010      // fast heading, slow heading
-    };
-
-    // Used ONLY when a measurement fails (robot didn't move etc).
-    // Keep these inside the bounds below.
-    private static final double FALLBACK_XV = 220, FALLBACK_YV = 170;
-    private static final double FALLBACK_XA = 700, FALLBACK_YA = 650;
 
     // ---- sanity bounds on MEASURED speed / accel ----
     // These are FULL-POWER (1.0) equivalents, so they stay valid whatever test
@@ -205,7 +191,10 @@ public class PathTuner extends OpModeEX {
     private Follower follow;        // tuned gains
     private Follower safeFollow;    // safe gains for going home
     private final ModelTuner model = new ModelTuner();
-    private double[] tunedGains = null;
+    private boolean plantMeasured = false;
+    // translation values being tuned: {FWD, STR}
+    private final double[] kEnd = new double[2];
+    private final double[] velGain = new double[2];
 
     // ---- per-run scratch ----
     private final java.util.ArrayList<double[]> samples = new java.util.ArrayList<>(); // {t, v}
@@ -241,8 +230,8 @@ public class PathTuner extends OpModeEX {
         Item(double[][] rel, double hdgDelta) { this.rel = rel; this.hdgDelta = hdgDelta; }
     }
     private final Item[] PROBE = {
-            new Item(new double[][]{{100, 0}}, 0),    // X / strafe
-            new Item(new double[][]{{0, 100}}, 0),    // Y / forward
+            new Item(new double[][]{{100, 0}}, 0),    // field X = forward
+            new Item(new double[][]{{0, 100}}, 0),    // field Y = strafe
             new Item(new double[][]{{0, 80}}, 45)     // heading
     };
     private final Item[] BATTERY = {
@@ -281,9 +270,12 @@ public class PathTuner extends OpModeEX {
         odometry.startPosition((int) CX, (int) CY, 0);
         driveBase.speed = 1;
 
-        genConfig = buildConfig(SAFE_GAINS, FALLBACK_XV, FALLBACK_YV, FALLBACK_XA, FALLBACK_YA);
-        paths = new PathsManager(genConfig);
-        safeFollow = new Follower(genConfig);
+        PathingValues.ensureLoaded();
+        kEnd[0] = PathingValues.K_END_FWD;
+        kEnd[1] = PathingValues.K_END_STR;
+        velGain[0] = PathingValues.VEL_GAIN_FWD;
+        velGain[1] = PathingValues.VEL_GAIN_STR;
+        rebuildFollowers();
 
         telemetry.addLine("PathTuner (self tuning). Robot at CENTRE, facing 0.");
         telemetry.addLine("No values to set - everything is measured.");
@@ -309,11 +301,12 @@ public class PathTuner extends OpModeEX {
         if (toggleMode) {
             fullPowerOutput = !fullPowerOutput;
             // already done? re-save straight away in the newly selected mode
-            if (state == State.FINISHED && tunedGains != null) saveBest();
+            if (state == State.FINISHED && plantMeasured) saveBest();
         }
 
         if (stop && state != State.IDLE && state != State.FINISHED) {
-            if (tunedGains != null) saveBest();
+            if (searching) restoreBeforeSave();
+            if (plantMeasured) saveBest();
             stopDrive();
             state = State.FINISHED;
         }
@@ -325,6 +318,7 @@ public class PathTuner extends OpModeEX {
                 stopDrive();
                 adjustLimits();
                 if (start) {
+                    rebuildFollowers();
                     openLog();
                     beginNoise();
                 }
@@ -430,7 +424,7 @@ public class PathTuner extends OpModeEX {
         }
 
         if (moved || rampPower >= rampCap || skip) {
-            ks[axIdx] = moved ? rampPower : rampCap * 0.5; // no-move fallback
+            ks[axIdx] = moved ? rampPower : currentKs(axIdx);   // skipped / never moved: keep the known value
             stopDrive();
             lurchRefX = phaseStartX; lurchRefY = phaseStartY; lurchRefH = phaseStartH;
             phaseTimer.reset();
@@ -465,6 +459,9 @@ public class PathTuner extends OpModeEX {
         model.tolX = clamp(1.5 * quantum[Ax.FWD.ordinal()], Math.max(2.5, posNoise * 4), 5.0);
         model.tolY = clamp(1.5 * quantum[Ax.STR.ordinal()], Math.max(2.5, posNoise * 4), 5.0);
         model.tolH = clamp(1.5 * quantum[Ax.TURN.ordinal()], Math.max(2.5, hdgNoise * 4), 5.0);
+        PathingValues.KS_FWD = model.ksFwd;
+        PathingValues.KS_STR = model.ksStr;
+        PathingValues.KS_TURN = model.ksTurn;
     }
 
     // ============================= 3. MAX V / A =============================
@@ -607,60 +604,53 @@ public class PathTuner extends OpModeEX {
         }
     }
 
-    /** Accel/decel the path profile may use: what the drive can do at the test
-     *  power AND what BRAKE alone can stop, whichever is smaller, with margin.
-     *  The profile uses one value for both, so decel never needs plugging. */
-    private double profileAccel(boolean fullPower) {
-        double m = Double.MAX_VALUE;
-        for (Ax a : new Ax[]{Ax.FWD, Ax.STR}) {
-            int i = a.ordinal();
-            double drive = maxA[i] > 1 ? maxA[i] * (fullPower ? fullScale(i) : 1) * maxPower : Double.MAX_VALUE;
-            double brake = brakeDecel[i] > 1 ? brakeDecel[i] : Double.MAX_VALUE;
-            m = Math.min(m, Math.min(drive, brake));
-        }
-        if (m == Double.MAX_VALUE) m = Math.min(FALLBACK_XA, FALLBACK_YA);
-        return m * PROFILE_MARGIN;
+    /** Speed per unit power above breakaway; the fitted asymptote is used when
+     *  the push hit the box before the speed plateaued. */
+    private double speedPerPower(int i) {
+        double v = maxV[i];
+        if (!plateauOk[i] && stepV[i] > v) v = Math.min(stepV[i], 1.3 * maxV[i]);
+        double net = maxPower - ks[i];
+        return v / (net > 0.1 ? net : maxPower);
     }
 
+    /** Writes the measured drive model into PathingValues - these are
+     *  measurements, so they are global from here on. */
     private void finishMaxVa() {
-        // keep measurements inside the sanity bounds before anything uses them
         applyBounds();
-
-        // accel-per-power straight from the regression
-        model.aFwd  = positiveOr(maxA[Ax.FWD.ordinal()],  FALLBACK_YA);
-        model.aStr  = positiveOr(maxA[Ax.STR.ordinal()],  FALLBACK_XA);
         model.aTurn = positiveOr(maxA[Ax.TURN.ordinal()], 300);
 
-        double xv = positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_XV);
-        double yv = positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_YV);
-        double acc = profileAccel(false);
-
-        // rebuild path generation + safe follower with real constants
-        genConfig = buildConfig(SAFE_GAINS, xv, yv, acc, acc);
-        paths = new PathsManager(genConfig);
-        safeFollow = new Follower(genConfig);
-
-        // let the plug limiter estimate wheel speed from real full-power speeds
-        if (maxV[Ax.FWD.ordinal()] > 1)  driveBase.fullSpeedFwd  = maxV[Ax.FWD.ordinal()]  * fullScale(Ax.FWD.ordinal());
-        if (maxV[Ax.STR.ordinal()] > 1)  driveBase.fullSpeedStr  = maxV[Ax.STR.ordinal()]  * fullScale(Ax.STR.ordinal());
-        if (maxV[Ax.TURN.ordinal()] > 1) driveBase.fullSpeedTurn = maxV[Ax.TURN.ordinal()] * fullScale(Ax.TURN.ordinal());
+        int f = Ax.FWD.ordinal(), st = Ax.STR.ordinal(), tu = Ax.TURN.ordinal();
+        if (maxV[f] > 1) PathingValues.SPEED_PER_POWER_FWD = speedPerPower(f);
+        if (maxV[st] > 1) PathingValues.SPEED_PER_POWER_STR = speedPerPower(st);
+        if (maxV[tu] > 1) PathingValues.SPEED_PER_POWER_TURN = speedPerPower(tu);
+        if (stepV[f] > 1) PathingValues.TAU_FWD = stepTau[f];
+        if (stepV[st] > 1) PathingValues.TAU_STR = stepTau[st];
+        if (stepV[tu] > 1) PathingValues.TAU_TURN = stepTau[tu];
+        double dSum = 0;
+        int dN = 0;
+        for (int i : new int[]{f, st}) if (stepV[i] > 1) { dSum += stepDelay[i]; dN++; }
+        if (dN > 0) PathingValues.DELAY = dSum / dN;
+        if (stepV[tu] > 1) PathingValues.DELAY_TURN = stepDelay[tu];
+        if (brakeDecel[f] > 1) PathingValues.BRAKE_DECEL_FWD = brakeDecel[f];
+        if (brakeDecel[st] > 1) PathingValues.BRAKE_DECEL_STR = brakeDecel[st];
 
         // turn plant for the heading phase-margin cap; small-signal speed per
         // power above breakaway, since that is what a correction sees
-        int ti = Ax.TURN.ordinal();
-        if (stepV[ti] > 1) {
-            double net = maxPower - ks[ti];
-            model.turnV = stepV[ti] / (net > 0.1 ? net : maxPower);
-            model.tauTurn = stepTau[ti];
-            model.delayTurn = stepDelay[ti];
+        if (stepV[tu] > 1) {
+            double net = maxPower - ks[tu];
+            model.turnV = stepV[tu] / (net > 0.1 ? net : maxPower);
+            model.tauTurn = stepTau[tu];
+            model.delayTurn = stepDelay[tu];
         }
+        plantMeasured = true;
+        rebuildFollowers();
     }
 
     /** Clamp measured max speed / accel into [MIN, MAX]. The bounds are
      *  FULL-POWER equivalents, so each measurement is converted to full power,
      *  clamped, then converted back to the test power. Failed measurements
-     *  (<= 1) are left alone so they still fall through to the FALLBACK_*
-     *  values instead of being "rescued" up to the minimum. */
+     *  (<= 1) are left alone, so the existing PathingValues are kept instead
+     *  of being "rescued" up to the minimum. */
     private void applyBounds() {
         for (int i = 0; i < 3; i++) {
             boolean turn = (i == Ax.TURN.ordinal());
@@ -701,28 +691,6 @@ public class PathTuner extends OpModeEX {
         return Math.max(1.0, s);
     }
 
-    /** Max speed to OUTPUT for an axis (full-power scaled when that mode is on). */
-    private double outV(int idx, double fallback) {
-        double v = positiveOr(maxV[idx], fallback);
-        return (fullPowerOutput && maxV[idx] > 1) ? v * fullScale(idx) : v;
-    }
-
-    /** Gains to OUTPUT. In full-power mode the model is re-run with the
-     *  full-power accel-per-power (everything else - kS, tolerances, locked
-     *  ts - stays as tuned), then the model is restored. */
-    private double[] outputGains() {
-        if (tunedGains == null) return null;
-        if (!fullPowerOutput) return tunedGains;
-
-        double f = model.aFwd, s = model.aStr, t = model.aTurn;
-        if (maxA[Ax.FWD.ordinal()]  > 1) model.aFwd  = f * maxPower * fullScale(Ax.FWD.ordinal());
-        if (maxA[Ax.STR.ordinal()]  > 1) model.aStr  = s * maxPower * fullScale(Ax.STR.ordinal());
-        if (maxA[Ax.TURN.ordinal()] > 1) model.aTurn = t * maxPower * fullScale(Ax.TURN.ordinal());
-        double[] g = model.gains();
-        model.aFwd = f; model.aStr = s; model.aTurn = t;
-        return g;
-    }
-
     // ============================= 4. SEARCH =============================
     /** Per axis, minimising run cost:
      *   TS      - golden section on ln(ts) (stiffness), zeta 1, default endpoint
@@ -732,18 +700,34 @@ public class PathTuner extends OpModeEX {
      *  Each run starts where the last ended (ping-pong), so no drive home. */
     private void beginSearchAxis(int i) {
         sIdx = i;
+        axisStart = sIdx < 2 ? new double[]{kEnd[sIdx], velGain[sIdx], 0}
+                : new double[]{model.tsH, model.zetaH, model.endH};
         sIter = 0;
         searching = true;
         evals.clear();
         stage = Stage.TS;
-        gsA = Math.log(sIdx == 2 ? TS_LO_H : TS_LO_T);
-        gsB = Math.log(sIdx == 2 ? TS_HI_H : TS_HI_T);
+        gsA = Math.log(sIdx == 2 ? TS_LO_H : KEND_LO);
+        gsB = Math.log(sIdx == 2 ? TS_HI_H : KEND_HI);
         gsC = gsB - GOLD * (gsB - gsA);
         gsD = gsA + GOLD * (gsB - gsA);
         gsFc = Double.NaN;
         gsFd = Double.NaN;
         gsPendingC = true;
         runProbeAt(Math.exp(gsC), 1.0, END_DEFAULT);
+    }
+
+    private double[] axisStart;
+
+    /** Stopped mid-search: put back the best value tried so far (or what the
+     *  axis had before), never the candidate that happened to be running. */
+    private void restoreBeforeSave() {
+        double[] b = evals.isEmpty() ? null : bestEval(null);
+        if (b != null) applyParams(b[0], b[1], b[2]);
+        else if (axisStart != null) applyParams(axisStart[0], axisStart[1], axisStart[2]);
+    }
+
+    private double currentKs(int i) {
+        return i == 0 ? PathingValues.KS_FWD : i == 1 ? PathingValues.KS_STR : PathingValues.KS_TURN;
     }
 
     private int invalidRuns = 0;
@@ -817,7 +801,7 @@ public class PathTuner extends OpModeEX {
                 return;
             }
         }
-        if (stage == Stage.ZETA) startTweakStage(Stage.END);
+        if (stage == Stage.ZETA && sIdx == 2) startTweakStage(Stage.END);
         else {
             stage = Stage.CONFIRM;
             double[] b = bestEval(null);
@@ -831,7 +815,7 @@ public class PathTuner extends OpModeEX {
         stageBase = bestEval(null);
         vertexTried = false;
         tryQueue.clear();
-        double[] tries = (s == Stage.ZETA) ? ZETA_TRY : END_TRY;
+        double[] tries = (s == Stage.ZETA) ? (sIdx == 2 ? ZETA_TRY : VG_TRY) : END_TRY;
         for (double x : tries) {
             double[] p = stageBase.clone();
             if (s == Stage.ZETA) p[1] = x; else p[2] = x;
@@ -854,7 +838,8 @@ public class PathTuner extends OpModeEX {
         }
         if (pts.size() < 3) return null;
         double[] p1 = pts.get(pts.size() - 3), p2 = pts.get(pts.size() - 2), p3 = pts.get(pts.size() - 1);
-        double x1 = px(p1[k], z), x2 = px(p2[k], z), x3 = px(p3[k], z);
+        boolean lin = z && sIdx == 2;
+        double x1 = px(p1[k], lin), x2 = px(p2[k], lin), x3 = px(p3[k], lin);
         double y1 = p1[3], y2 = p2[3], y3 = p3[3];
         double den = (x1 - x2) * (x1 - x3) * (x2 - x3);
         if (Math.abs(den) < 1e-9) return null;
@@ -862,17 +847,18 @@ public class PathTuner extends OpModeEX {
         double b = (x3 * x3 * (y1 - y2) + x2 * x2 * (y3 - y1) + x1 * x1 * (y2 - y3)) / den;
         if (a <= 0) return null;
         double xv = -b / (2 * a);
-        double lo = z ? ZETA_LO : Math.log(END_LO), hi = z ? ZETA_HI : Math.log(END_HI);
+        double lo = !z ? Math.log(END_LO) : lin ? ZETA_LO : Math.log(VG_LO);
+        double hi = !z ? Math.log(END_HI) : lin ? ZETA_HI : Math.log(VG_HI);
         xv = clamp(xv, lo, hi);
         double minGap = 0.08;
         if (Math.abs(xv - x1) < minGap || Math.abs(xv - x2) < minGap || Math.abs(xv - x3) < minGap) return null;
         double[] c = stageBase.clone();
-        c[k] = z ? xv : Math.exp(xv);
+        c[k] = lin ? xv : Math.exp(xv);
         return c;
     }
 
-    /** Search coordinate: zeta directly, endpoint ratio in log space. */
-    private static double px(double v, boolean zeta) { return zeta ? v : Math.log(v); }
+    /** Search coordinate: heading zeta directly, everything else in log space. */
+    private static double px(double v, boolean linear) { return linear ? v : Math.log(v); }
 
     /** Lowest-cost evaluation, skipping {@code exclude}. */
     private double[] bestEval(double[] exclude) {
@@ -911,14 +897,8 @@ public class PathTuner extends OpModeEX {
     private void lockAxis(double[] e) {
         lockedTs[sIdx] = e[0];
         applyParams(e[0], e[1], e[2]);
-        model.loopDt = loopDt;
-        // from here on, drive home with the tuned gains - much faster than
-        // the conservative safe set
-        safeFollow = new Follower(buildConfig(model.gains(),
-                positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_XV),
-                positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_YV),
-                profileAccel(false), profileAccel(false)));
-        buildTunedFollower();
+        // from here on, drive home with the tuned values
+        rebuildFollowers();
         saveBest();
         // re-centre before the next axis / the verify battery
         buildReturnPath();
@@ -933,21 +913,42 @@ public class PathTuner extends OpModeEX {
         }
     }
 
+    /** Translation: ts slot = kEnd, zeta slot = speed-feedback gain. */
     private void applyParams(double ts, double zeta, double end) {
-        if (sIdx == 0) { model.tsX = ts; model.zetaX = zeta; model.endX = end; }
-        else if (sIdx == 1) { model.tsY = ts; model.zetaY = zeta; model.endY = end; }
+        if (sIdx < 2) { kEnd[sIdx] = ts; velGain[sIdx] = zeta; }
         else { model.tsH = ts; model.zetaH = zeta; model.endH = end; }
     }
 
     private double axisTol(int i) { return i == 0 ? model.tolX : i == 1 ? model.tolY : model.tolH; }
 
     private void buildTunedFollower() {
-        model.loopDt = loopDt;
-        tunedGains = model.gains();
-        follow = new Follower(buildConfig(tunedGains,
-                positiveOr(maxV[Ax.FWD.ordinal()], FALLBACK_XV),
-                positiveOr(maxV[Ax.STR.ordinal()], FALLBACK_YV),
-                profileAccel(false), profileAccel(false)));
+        follow = new Follower(newConfig());
+    }
+
+    private void rebuildFollowers() {
+        genConfig = newConfig();
+        paths = new PathsManager(genConfig);
+        safeFollow = new Follower(newConfig());
+        buildTunedFollower();
+    }
+
+    /** Global values + what this tuner has measured / is trying. */
+    private RobotConfig newConfig() {
+        RobotConfig c = new RobotConfig();
+        c.powerLimit = plantMeasured ? maxPower : Math.min(maxPower, 0.5);
+        c.kEndFwd = kEnd[0];
+        c.kEndStr = kEnd[1];
+        c.velGainFwd = velGain[0];
+        c.velGainStr = velGain[1];
+        c.holdT = holdTolT();
+        c.holdH = holdTolH();
+        if (plantMeasured) {
+            model.loopDt = loopDt;
+            double[] g = model.headingGains();
+            c.setFastHeadingPD(g[0], g[1]);
+            c.setSlowHeadingPD(g[2], g[3]);
+        }
+        return c;
     }
 
     // ============================= PATH RUN (probe + verify) =============================
@@ -991,7 +992,6 @@ public class PathTuner extends OpModeEX {
         follow.setPath(paths.returnPath("outPath"));
         follow.usePathHeadings(false);
         follow.holdPositionAtPathEnd(true);
-        FollowerPrimer.primeHeading(follow, targetHeading, odometry.Heading());
 
         tr = new TrialResult();
         tr.settleTime = SETTLE_TIMEOUT;
@@ -1213,7 +1213,6 @@ public class PathTuner extends OpModeEX {
         safeFollow.setPath(paths.returnPath("backPath"));
         safeFollow.usePathHeadings(false);
         safeFollow.holdPositionAtPathEnd(true);
-        FollowerPrimer.primeHeading(safeFollow, 0, odometry.Heading());
     }
 
     /** @return true only when ACTUALLY near home (retries the return path if a
@@ -1241,7 +1240,7 @@ public class PathTuner extends OpModeEX {
     }
 
     private void drive(Follower f, double heading) {
-        RobotPower cp = FollowerPrimer.follow(f, heading, holdTolH(), model.ksTurn, odometry.Heading(),
+        RobotPower cp = f.followPathAuto(heading, odometry.Heading(),
                 odometry.X(), odometry.Y(), odometry.getXVelocity(), odometry.getYVelocity());
         cmdF = clamp(cp.getVertical(), -maxPower, maxPower);
         cmdS = clamp(cp.getHorizontal(), -maxPower, maxPower);
@@ -1282,19 +1281,9 @@ public class PathTuner extends OpModeEX {
     }
 
     private double holdTolH() { return 0.5 * model.tolH; }
+    private double holdTolT() { return Math.min(model.tolX, model.tolY); }
 
     private double degPerSec() { return odometry.getHeadingVelocityDeg(); }
-
-    private static RobotConfig buildConfig(double[] p, double maxXV, double maxYV, double maxXA, double maxYA) {
-        return new RobotConfig()
-                .setXOnPathPD(p[0], p[1])
-                .setYOnPathPD(p[2], p[3])
-                .setXLastAdjustmentPD(p[4], p[5])
-                .setYLastAdjustmentPD(p[6], p[7])
-                .setFastHeadingPD(p[8], p[9])
-                .setSlowHeadingPD(p[10], p[11])
-                .setRobotConstants(maxXV, maxYV, maxXA, maxYA);
-    }
 
     private static double clamp(double v, double lo, double hi) { return v < lo ? lo : (v > hi ? hi : v); }
     private static double wrap360(double a) { a %= 360; if (a < 0) a += 360; return a; }
@@ -1303,8 +1292,8 @@ public class PathTuner extends OpModeEX {
     // ============================= TELEMETRY / LOGGING =============================
     private String modeLabel() {
         return fullPowerOutput
-                ? "FULL POWER (scaled up from tests at " + String.format("%.2f", maxPower) + ")"
-                : "AS TESTED (at " + String.format("%.2f", maxPower) + " power)";
+                ? "FULL POWER (saves POWER_LIMIT 1.0)"
+                : "AS TESTED (saves POWER_LIMIT " + String.format("%.2f", maxPower) + ")";
     }
 
     private void drawTelemetry() {
@@ -1322,44 +1311,44 @@ public class PathTuner extends OpModeEX {
                 model.tolX, model.tolY, model.tolH));
         telemetry.addData("maxV F/S/T (at test power)", String.format("%.0f / %.0f / %.0f  plateau %b/%b/%b",
                 maxV[0], maxV[1], maxV[2], plateauOk[0], plateauOk[1], plateauOk[2]));
-        telemetry.addData("A F/S/T (regression)", String.format("%.0f / %.0f / %.0f",
-                maxA[0], maxA[1], maxA[2]));
         if (vClamped[0] || vClamped[1] || vClamped[2] || aClamped[0] || aClamped[1] || aClamped[2])
             telemetry.addData("!! BOUNDS HIT (V F/S/T, A F/S/T)", String.format("%b/%b/%b, %b/%b/%b",
                     vClamped[0], vClamped[1], vClamped[2], aClamped[0], aClamped[1], aClamped[2]));
-        telemetry.addData("brake decel F/S/T (0 power)", String.format("%.0f / %.0f / %.0f   profile accel %.0f",
-                brakeDecel[0], brakeDecel[1], brakeDecel[2], profileAccel(false)));
+        telemetry.addData("speed/power F/S/T", String.format("%.0f / %.0f / %.0f",
+                PathingValues.SPEED_PER_POWER_FWD, PathingValues.SPEED_PER_POWER_STR, PathingValues.SPEED_PER_POWER_TURN));
+        telemetry.addData("step delay/tau ms F S T", String.format("%.0f/%.0f  %.0f/%.0f  %.0f/%.0f",
+                stepDelay[0] * 1000, stepTau[0] * 1000, stepDelay[1] * 1000, stepTau[1] * 1000,
+                stepDelay[2] * 1000, stepTau[2] * 1000));
+        telemetry.addData("brake decel F/S/T", String.format("%.0f / %.0f / %.0f   planned F/S %.0f / %.0f",
+                brakeDecel[0], brakeDecel[1], brakeDecel[2],
+                PathingValues.BRAKE_DECEL_FWD * PathingValues.DECEL_MARGIN, PathingValues.BRAKE_DECEL_STR * PathingValues.DECEL_MARGIN));
         telemetry.addData("loop dt", String.format("%.1f ms   max wheel speed %.2f", loopDt * 1000,
                 driveBase.maxWheelSpeedFraction()));
-        if (state == State.SEARCH_PROBE || state == State.SEARCH_RETURN)
-            telemetry.addData("search", String.format("%s %s  ts %.2f  zeta %.2f  end %.2f  run %d  last cost %.2f",
-                    axisName(sIdx), stage, curTs, curZeta, curEnd, sIter + 1, lastCost));
+        if (state == State.SEARCH_PROBE || state == State.SEARCH_RETURN) {
+            String p = sIdx < 2
+                    ? String.format("kEnd %.1f  velGain %.2f", curTs, curZeta)
+                    : String.format("ts %.2f  zeta %.2f  end %.2f", curTs, curZeta, curEnd);
+            telemetry.addData("search", String.format("%s %s  %s  run %d  last cost %.2f",
+                    axisName(sIdx), stage, p, sIter + 1, lastCost));
+        }
         if (state == State.SEARCH_PROBE)
             telemetry.addData("this run", String.format("in area @%.2fs  stopped @%.2fs  reversals %d  fine exits %d  chatter %.2f  cost so far %.2f",
                     tCoarse, settledAt, reversals, fineExits, chatter, costInt));
         if (state == State.VERIFY_RUN || state == State.VERIFY_RETURN)
             telemetry.addData("verify path", (batteryIdx + 1) + "/" + BATTERY.length);
-        telemetry.addData("locked ts X/Y/H", String.format("%.2f / %.2f / %.2f",
-                lockedTs[0], lockedTs[1], lockedTs[2]));
-        telemetry.addData("zeta X/Y/H  end X/Y/H", String.format("%.2f / %.2f / %.2f   %.2f / %.2f / %.2f",
-                model.zetaX, model.zetaY, model.zetaH, model.endX, model.endY, model.endH));
-        telemetry.addData("step delay/tau ms F S T", String.format("%.0f/%.0f  %.0f/%.0f  %.0f/%.0f",
-                stepDelay[0] * 1000, stepTau[0] * 1000, stepDelay[1] * 1000, stepTau[1] * 1000,
-                stepDelay[2] * 1000, stepTau[2] * 1000));
-        telemetry.addData("heading PM fast/slow", String.format("%.0f / %.0f deg   %s",
-                model.pmFast, model.pmSlow, follow != null && FollowerPrimer.softHeading(follow) ? "soft" : "fast"));
+        telemetry.addData("kEnd X/Y  velGain X/Y", String.format("%.1f / %.1f   %.2f / %.2f",
+                kEnd[0], kEnd[1], velGain[0], velGain[1]));
+        telemetry.addData("heading ts/zeta/end", String.format("%.2f / %.2f / %.2f   PM fast/slow %.0f / %.0f deg",
+                model.tsH, model.zetaH, model.endH, model.pmFast, model.pmSlow));
+        if (follow != null)
+            telemetry.addData("follower", String.format("%s  %s  heading %s  target %.0f cm/s  to go %.1f cm",
+                    follow.isSettling() ? "settling" : "path", follow.isHolding() ? "HOLD" : "",
+                    follow.isSoftHeading() ? "soft" : "fast", follow.getTargetSpeed(), follow.getRemaining()));
         telemetry.addData("pos", String.format("%.0f,%.0f  h%.0f",
                 odometry.X(), odometry.Y(), odometry.Heading()));
-        if (tunedGains != null) {
-            telemetry.addLine("gains (as tested): " + fmt(tunedGains));
-            if (fullPowerOutput) telemetry.addLine("gains (OUTPUT, full power): " + fmt(outputGains()));
-            telemetry.addData("OUTPUT consts maxXV/YV/XA/YA", String.format("%.0f / %.0f / %.0f / %.0f",
-                    outV(Ax.FWD.ordinal(), FALLBACK_XV), outV(Ax.STR.ordinal(), FALLBACK_YV),
-                    profileAccel(fullPowerOutput), profileAccel(fullPowerOutput)));
-        }
         telemetry.addData("best cost X/Y/H", String.format("%.2f / %.2f / %.2f",
                 bestCost[0], bestCost[1], bestCost[2]));
-        if (state == State.FINISHED) telemetry.addLine(">>> DONE - saved to tune_best.txt (" + (fullPowerOutput ? "FULL POWER" : "AS TESTED") + ") - Y switches mode + re-saves <<<");
+        if (state == State.FINISHED) telemetry.addLine(">>> DONE - saved to PathingValues + tune_best.txt (" + (fullPowerOutput ? "FULL POWER" : "AS TESTED") + ") - Y switches mode + re-saves <<<");
     }
 
     private static String axisName(int i) { return i == 0 ? "X" : i == 1 ? "Y" : "H"; }
@@ -1394,51 +1383,44 @@ public class PathTuner extends OpModeEX {
         } catch (IOException ignored) {}
     }
 
+    /** Puts the tuned values into PathingValues (live for every follower made
+     *  after this), saves its file, and writes a readable summary. */
     private void saveBest() {
+        PathingValues.K_END_FWD = kEnd[0];
+        PathingValues.K_END_STR = kEnd[1];
+        PathingValues.VEL_GAIN_FWD = velGain[0];
+        PathingValues.VEL_GAIN_STR = velGain[1];
+        PathingValues.HOLD_T = holdTolT();
+        PathingValues.HOLD_H = holdTolH();
+        model.loopDt = loopDt;
+        double[] g = model.headingGains();
+        PathingValues.HEADING_FAST_P = g[0];
+        PathingValues.HEADING_FAST_D = g[1];
+        PathingValues.HEADING_SLOW_P = g[2];
+        PathingValues.HEADING_SLOW_D = g[3];
+        PathingValues.POWER_LIMIT = fullPowerOutput ? 1.0 : maxPower;
+        boolean saved = PathingValues.save();
         try {
             File dir = new File("/sdcard/FIRST/datalogs");
             if (!dir.exists()) dir.mkdirs();
             FileWriter w = new FileWriter(new File(dir, "tune_best.txt"), false);
-            double[] og = outputGains();
-            double[] b = og != null ? og : SAFE_GAINS;
-            w.write("// PathTuner (self tuning) result - everything below was MEASURED\n");
+            w.write("// PathTuner (self tuning) result\n");
             w.write("// OUTPUT MODE: " + modeLabel() + "\n");
+            w.write("// " + (saved ? "saved to " : "!! could NOT save ") + PathingValues.FILE
+                    + " - loaded automatically by every new RobotConfig()\n");
             w.write(String.format("// odometry noise  pos=%.2fcm hdg=%.2fdeg  vel=%.1fcm/s %.1fdeg/s\n",
                     posNoise, hdgNoise, velNoiseT, velNoiseH));
-            w.write(String.format("// breakaway power  fwd=%.2f strafe=%.2f turn=%.2f\n",
-                    model.ksFwd, model.ksStr, model.ksTurn));
             w.write(String.format("// derived tolerances  X=%.1f Y=%.1f cm  H=%.1f deg\n",
                     model.tolX, model.tolY, model.tolH));
-            w.write(String.format("// measured maxV (at test power)  fwd=%.0f strafe=%.0f turn=%.0f  [plateau %b/%b/%b]\n",
-                    maxV[0], maxV[1], maxV[2], plateauOk[0], plateauOk[1], plateauOk[2]));
-            w.write(String.format("// accel per power (regression)  fwd=%.0f strafe=%.0f turn=%.0f\n",
-                    model.aFwd, model.aStr, model.aTurn));
-            w.write(String.format("// brake decel (0 power)  fwd=%.0f strafe=%.0f turn=%.0f  -> profile accel %.0f\n",
-                    brakeDecel[0], brakeDecel[1], brakeDecel[2], profileAccel(fullPowerOutput)));
-            w.write(String.format("// locked ts  X=%.2f Y=%.2f H=%.2f  zeta %.2f/%.2f/%.2f  end %.2f/%.2f/%.2f  best cost %.2f / %.2f / %.2f\n",
-                    lockedTs[0], lockedTs[1], lockedTs[2], model.zetaX, model.zetaY, model.zetaH,
-                    model.endX, model.endY, model.endH, bestCost[0], bestCost[1], bestCost[2]));
-            w.write(String.format("// step response delay/tau ms  fwd %.0f/%.0f  strafe %.0f/%.0f  turn %.0f/%.0f  heading phase margin fast %.0f slow %.0f deg\n",
-                    stepDelay[0] * 1000, stepTau[0] * 1000, stepDelay[1] * 1000, stepTau[1] * 1000,
-                    stepDelay[2] * 1000, stepTau[2] * 1000, model.pmFast, model.pmSlow));
-            w.write(String.format("// drive with FollowerPrimer.follow(follower, heading, %.2f, %.3f, H, X, Y, XV, YV) instead of followPathAuto\n",
-                    holdTolH(), model.ksTurn));
-            w.write(String.format("// D gains are PER LOOP, tuned at loop dt %.1f ms - retune if your OpMode loop is much slower/faster\n",
-                    model.loopDt * 1000));
-            w.write(String.format("// DriveBase: fullSpeedFwd=%.0f fullSpeedStr=%.0f fullSpeedTurn=%.0f\n",
-                    driveBase.fullSpeedFwd, driveBase.fullSpeedStr, driveBase.fullSpeedTurn));
-            w.write("new RobotConfig()\n");
-            w.write(String.format("    .setXOnPathPD(%.5f, %.5f)\n", b[0], b[1]));
-            w.write(String.format("    .setYOnPathPD(%.5f, %.5f)\n", b[2], b[3]));
-            w.write(String.format("    .setXLastAdjustmentPD(%.5f, %.5f)\n", b[4], b[5]));
-            w.write(String.format("    .setYLastAdjustmentPD(%.5f, %.5f)\n", b[6], b[7]));
-            w.write(String.format("    .setFastHeadingPD(%.5f, %.5f)\n", b[8], b[9]));
-            w.write(String.format("    .setSlowHeadingPD(%.5f, %.5f)\n", b[10], b[11]));
-            w.write(String.format("    .setRobotConstants(%.0f, %.0f, %.0f, %.0f);\n",
-                    outV(Ax.FWD.ordinal(), FALLBACK_XV),
-                    outV(Ax.STR.ordinal(), FALLBACK_YV),
-                    profileAccel(fullPowerOutput),
-                    profileAccel(fullPowerOutput)));
+            w.write(String.format("// measured maxV (at test power %.2f)  fwd=%.0f strafe=%.0f turn=%.0f  [plateau %b/%b/%b]\n",
+                    maxPower, maxV[0], maxV[1], maxV[2], plateauOk[0], plateauOk[1], plateauOk[2]));
+            w.write(String.format("// brake decel (protected reverse)  fwd=%.0f strafe=%.0f turn=%.0f\n",
+                    brakeDecel[0], brakeDecel[1], brakeDecel[2]));
+            w.write(String.format("// heading ts=%.2f zeta=%.2f end=%.2f  phase margin fast %.0f slow %.0f deg\n",
+                    model.tsH, model.zetaH, model.endH, model.pmFast, model.pmSlow));
+            w.write(String.format("// best cost X/Y/H %.2f / %.2f / %.2f\n", bestCost[0], bestCost[1], bestCost[2]));
+            w.write("// To hard-code instead (set USE_TUNED_FILE = false), paste into PathingValues:\n");
+            w.write(PathingValues.asJava());
             w.close();
         } catch (IOException ignored) {}
     }
