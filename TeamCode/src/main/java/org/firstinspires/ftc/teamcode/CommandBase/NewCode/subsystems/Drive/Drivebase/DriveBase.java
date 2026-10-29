@@ -12,11 +12,12 @@ import dev.weaponboy.nexus_command_base.Commands.LambdaCommand;
 import dev.weaponboy.nexus_command_base.Hardware.MotorEx;
 import dev.weaponboy.nexus_command_base.Hardware.ServoDegrees;
 import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathLog;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingValues;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingUtility.PIDController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingUtility.RobotPower;
 
-public class DriveBase extends SubSystem {
+public class DriveBase extends SubSystem implements PathLog.Extras {
 
     public MotorEx LF = new MotorEx();
     public MotorEx RF = new MotorEx();
@@ -42,6 +43,8 @@ public class DriveBase extends SubSystem {
     private long lastShapeNanos = 0;
     public boolean odoVelocityRobotFrame = false;
     private final double[] wheelSpeed = new double[4];   // LF, RF, LB, RB fraction of full speed
+    private final double[] wheelCmd = new double[4];     // before the braking ramp
+    private final double[] wheelOut = new double[4];     // after it
 
     public double vertical;
 
@@ -65,6 +68,7 @@ public class DriveBase extends SubSystem {
         LB.initMotor("LB", getOpMode().hardwareMap);
         RB.initMotor("RB", getOpMode().hardwareMap);
         PathingValues.ensureLoaded();
+        PathLog.setExtras(this);
 
 
 
@@ -110,6 +114,16 @@ public class DriveBase extends SubSystem {
                 long now = System.nanoTime();
                 double dt = lastShapeNanos == 0 ? 0.02 : Math.min(0.1, (now - lastShapeNanos) / 1e9);
                 lastShapeNanos = now;
+                double tl = PathingValues.SIDE_TRIM_LR, tf = PathingValues.SIDE_TRIM_FB;
+                if (tl != 0 || tf != 0) {
+                    lfT *= trim(1 - tl - tf);
+                    rfT *= trim(1 + tl - tf);
+                    lbT *= trim(1 - tl + tf);
+                    rbT *= trim(1 + tl + tf);
+                    double m = Math.max(Math.max(Math.abs(lfT), Math.abs(rfT)), Math.max(Math.abs(lbT), Math.abs(rbT)));
+                    if (m > 1) { lfT /= m; rfT /= m; lbT /= m; rbT /= m; }
+                }
+                wheelCmd[0] = lfT; wheelCmd[1] = rfT; wheelCmd[2] = lbT; wheelCmd[3] = rbT;
                 if (protectReversal) {
                     estimateWheelSpeeds();
                     lfT = shapeBraking(0, lfT, wheelSpeed[0], dt);
@@ -118,6 +132,7 @@ public class DriveBase extends SubSystem {
                     rbT = shapeBraking(3, rbT, wheelSpeed[3], dt);
                 }
 
+                wheelOut[0] = lfT; wheelOut[1] = rfT; wheelOut[2] = lbT; wheelOut[3] = rbT;
                 double m0, m1, m2, m3;
                 if (!engage) {
                     m0 = -lfT; m1 = rfT; m2 = -lbT; m3 = rbT;
@@ -157,6 +172,12 @@ public class DriveBase extends SubSystem {
         wheelSpeed[3] = wf + ws - wt;
     }
 
+    /** Side-balance gain for one wheel, never more than MAX_SIDE_TRIM from 1. */
+    private static double trim(double g) {
+        double m = PathingValues.MAX_SIDE_TRIM;
+        return Math.max(1 - m, Math.min(1 + m, g));
+    }
+
     private double shapeBraking(int k, double cmd, double w, double dt) {
         w = Math.max(-1, Math.min(1, w));
         double i = cmd - w;
@@ -167,6 +188,26 @@ public class DriveBase extends SubSystem {
         double mag = Math.min(Math.abs(i), Math.min(PathingValues.BRAKE_CURRENT_MAX, brakeI[k] + PathingValues.BRAKE_CURRENT_RATE * dt));
         brakeI[k] = mag;
         return Math.max(-1, Math.min(1, w - Math.signum(w) * mag));
+    }
+
+    private static final String[] LOG_NAMES = {
+            "cmdLF", "cmdRF", "cmdLB", "cmdRB", "outLF", "outRF", "outLB", "outRB",
+            "wLF", "wRF", "wLB", "wRB"};
+
+    @Override
+    public String[] names() {
+        return LOG_NAMES;
+    }
+
+    /** Wheel commands before / after the braking ramp, and estimated wheel
+     *  speed fractions, from the last drive execute (the PREVIOUS loop's command). */
+    @Override
+    public void values(double[] out) {
+        for (int i = 0; i < 4; i++) {
+            out[i] = wheelCmd[i];
+            out[4 + i] = wheelOut[i];
+            out[8 + i] = wheelSpeed[i];
+        }
     }
 
     /** Largest |wheel speed| fraction right now (for telemetry / tuning). */

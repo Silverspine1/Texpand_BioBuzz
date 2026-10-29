@@ -1,6 +1,7 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.Follower;
 
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathGeneration.PathBuilder;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathLog;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingUtility.RobotPower;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.RobotUtilities.RobotConfig;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.RobotUtilities.Vector2D;
@@ -42,8 +43,10 @@ public class Follower extends FollowerBaseMethods {
     private boolean fresh = true;
     private double prevRot = Double.NaN;
 
-    // telemetry
+    // telemetry / log
     private double lastTargetSpeed = 0, lastRemaining = 0;
+    private int lastLimiter = 0;            // 0 top speed, 1 corner, 2 braking sqrt, 3 end tail
+    private double lastVTarget = 0, lastRot = 0, lastDRot = 0;
 
     public Follower() {
         this(new RobotConfig());
@@ -93,6 +96,7 @@ public class Follower extends FollowerBaseMethods {
         prevRot = Double.NaN;
         lastNanos = 0;
         fresh = true;
+        PathLog.newRun();
     }
 
     public RobotPower followPathAuto(double targetHeading, double H, double X, double Y, double XV, double YV) {
@@ -123,6 +127,8 @@ public class Follower extends FollowerBaseMethods {
 
         double vx = 0, vy = 0, ax = 0, ay = 0;
         boolean translate = !(pathFinished && !holdPosition);
+        lastVTarget = 0;
+        lastLimiter = -1;
 
         Vector2D end = pathoperator.getPointOnFollowable(pathoperator.getLastPoint());
         double ex = end.getX() - X, ey = end.getY() - Y;
@@ -151,6 +157,7 @@ public class Follower extends FollowerBaseMethods {
             if (r > 1e-6) {
                 double ux = dx / r, uy = dy / r;
                 double[] va = profile(r, ux, uy, Double.MAX_VALUE, XV * ux + YV * uy, sin, cos);
+                lastVTarget = va[0];
                 vx = ux * va[0];
                 vy = uy * va[0];
                 ax = ux * va[1];
@@ -166,6 +173,7 @@ public class Follower extends FollowerBaseMethods {
             double r = sRem + config.overshoot;
             double vAlong = XV * tx + YV * ty;
             double[] va = profile(r, tx, ty, pathoperator.cornerSpeed(idx), vAlong, sin, cos);
+            lastVTarget = va[0];
 
             double cx = -(ox - along * tx), cy = -(oy - along * ty);
             double cmax = dirMaxSpeed(cx, cy, sin, cos);
@@ -182,17 +190,22 @@ public class Follower extends FollowerBaseMethods {
 
         double pf = 0, ps = 0;
         lastTargetSpeed = Math.hypot(vx, vy);
+        double vf = 0, vs = 0, af = 0, as = 0, mf, ms;
+        if (disableGlobalFollowing) {
+            mf = XV;
+            ms = YV;
+        } else {
+            mf = YV * sin + XV * cos;
+            ms = YV * cos - XV * sin;
+        }
         if (translate) {
-            double vf, vs, af, as, mf, ms;
             if (disableGlobalFollowing) {
-                vf = vx; vs = vy; af = ax; as = ay; mf = XV; ms = YV;
+                vf = vx; vs = vy; af = ax; as = ay;
             } else {
                 vf = vy * sin + vx * cos;
                 vs = vy * cos - vx * sin;
                 af = ay * sin + ax * cos;
                 as = ay * cos - ax * sin;
-                mf = YV * sin + XV * cos;
-                ms = YV * cos - XV * sin;
             }
             pf = axisPower(vf, af, mf, config.speedPerPowerFwd, config.tauFwd, config.ksFwd, config.velGainFwd);
             ps = axisPower(vs, as, ms, config.speedPerPowerStr, config.tauStr, config.ksStr, config.velGainStr);
@@ -210,7 +223,20 @@ public class Follower extends FollowerBaseMethods {
             if (hdg > 360) hdg -= 360;
         }
         double turn = getTurnPower(hdg, H, dt);
-        if (!finite(pf) || !finite(ps) || !finite(turn)) return new RobotPower(0, 0, 0);
+        if (!finite(pf) || !finite(ps) || !finite(turn)) {
+            pf = 0;
+            ps = 0;
+            turn = 0;
+        }
+        if (PathLog.active()) {
+            double etx = pathoperator.tangentX(last), ety = pathoperator.tangentY(last);
+            int mode = !translate && heldXY ? 2 : !(translate || settling) ? 3 : settling ? 1 : 0;
+            PathLog.row(0, 0, dt, mode, lastLimiter, idx,
+                    X, Y, H, XV, YV,
+                    end.getX(), end.getY(), dist, ex * etx + ey * ety, -ex * ety + ey * etx, lastRemaining,
+                    lastVTarget, vf, vs, af, as, mf, ms,
+                    pf, ps, turn, hdg, lastRot, lastDRot, isSoftHeading() ? 1 : 0);
+        }
         return new RobotPower(pf, ps, turn);
     }
 
@@ -229,6 +255,7 @@ public class Follower extends FollowerBaseMethods {
         double vBrake = Math.sqrt(2 * decel * rr);
         double vTail = kEnd * rr;
         double v = Math.min(vTop, Math.min(vBrake, vTail));
+        lastLimiter = v == vTail ? 3 : v == vBrake ? 2 : vTop < dirMaxSpeed(ux, uy, sin, cos) ? 1 : 0;
         double dvdr = 0;
         if (v == vTail) dvdr = kEnd;
         else if (v == vBrake && vBrake > 1e-6) dvdr = decel / vBrake;
@@ -267,6 +294,8 @@ public class Follower extends FollowerBaseMethods {
         double rot = wrap180(targetHeading - currentHeading);
         double dRot = Double.isNaN(prevRot) ? 0 : wrap180(rot - prevRot) / dt;
         prevRot = rot;
+        lastRot = rot;
+        lastDRot = dRot;
         double a = Math.abs(rot);
         if (softHeading) {
             if (a > SOFT_OUT) softHeading = false;

@@ -10,6 +10,7 @@ import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.Tran
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware_doubleBot;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Localisation.Odometry;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathLog;
 
 import dev.weaponboy.nexus_command_base.OpmodeEX.Scheduler;
 import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
@@ -66,6 +67,7 @@ public abstract class OpModeEX extends OpMode {
         telemetry.setMsTransmissionInterval(200);
 
         timer.reset();
+        PathLog.start(getClass().getSimpleName());
         scheduler.init();
         initEX();
     }
@@ -122,6 +124,6 @@ public abstract class OpModeEX extends OpMode {
      */
     @Override
     public void stop() {
-
+        PathLog.stop();
     }
 }

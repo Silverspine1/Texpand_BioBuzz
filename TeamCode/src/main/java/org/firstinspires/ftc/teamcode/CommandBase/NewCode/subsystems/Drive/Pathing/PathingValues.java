@@ -70,6 +70,15 @@ public final class PathingValues {
     public static double HEADING_SLOW_P = 0.008;
     public static double HEADING_SLOW_D = 0.003;
 
+    // ---- drive side balance (PathTuner measures these) ----
+    // A side that pushes harder makes the robot yaw when it should drive
+    // straight. Measured from the yaw during the full-power pushes and
+    // cancelled per wheel in DriveBase; each wheel is changed by at most
+    // MAX_SIDE_TRIM. + = left side stronger / front pair stronger.
+    public static double SIDE_TRIM_LR = 0;
+    public static double SIDE_TRIM_FB = 0;
+    public static final double MAX_SIDE_TRIM = 0.10;
+
     // ---- DriveBase bare-motor protection ----
     public static double BRAKE_CURRENT_MAX = 0.8;      // braking current cap, fraction of stall
     public static double BRAKE_CURRENT_RATE = 15;      // braking current ramp, stall fractions / s
@@ -81,7 +90,7 @@ public final class PathingValues {
             "TAU_FWD", "TAU_STR", "TAU_TURN", "DELAY", "DELAY_TURN",
             "KS_FWD", "KS_STR", "KS_TURN", "BRAKE_DECEL_FWD", "BRAKE_DECEL_STR",
             "POWER_LIMIT", "K_END_FWD", "K_END_STR", "VEL_GAIN_FWD", "VEL_GAIN_STR",
-            "HOLD_T", "HOLD_H",
+            "HOLD_T", "HOLD_H", "SIDE_TRIM_LR", "SIDE_TRIM_FB",
             "HEADING_FAST_P", "HEADING_FAST_D", "HEADING_SLOW_P", "HEADING_SLOW_D"));
 
     private static boolean loaded = false;
@@ -107,7 +116,8 @@ public final class PathingValues {
             if (v == null) continue;
             try {
                 double d = Double.parseDouble(v.trim());
-                if (!Double.isNaN(d) && !Double.isInfinite(d) && d >= 0) fd.setDouble(null, d);
+                boolean signed = fd.getName().startsWith("SIDE_TRIM");
+                if (!Double.isNaN(d) && !Double.isInfinite(d) && (signed || d >= 0)) fd.setDouble(null, d);
             } catch (Exception ignored) {}
         }
     }

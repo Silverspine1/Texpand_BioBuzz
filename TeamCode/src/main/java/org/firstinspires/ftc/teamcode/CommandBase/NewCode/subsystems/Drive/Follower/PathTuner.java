@@ -8,6 +8,7 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathLog;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingValues;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.Follower.Follower;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathGeneration.PathsManager;
@@ -161,6 +162,10 @@ public class PathTuner extends OpModeEX {
     private final double[] stepDelay = new double[3], stepTau = new double[3], stepV = new double[3];
     private final java.util.ArrayList<double[]> posSamples = new java.util.ArrayList<>();   // {t, displacement}
     private double pushOnT = Double.NaN, pushLastH = 0, pushTurned = 0;
+    // yaw rate while pushing straight (FWD, STR) -> side imbalance
+    private final double[] pushYaw = new double[2];
+    private final boolean[] pushYawOk = new boolean[2];
+    private double trimLrMeasured = 0, trimFbMeasured = 0;
 
     // last drive command (fwd, strafe, turn) and its chatter once in the area
     private double cmdF = 0, cmdS = 0, cmdT = 0;
@@ -358,7 +363,11 @@ public class PathTuner extends OpModeEX {
                 if (returnHome()) {
                     batteryIdx++;
                     if (batteryIdx >= BATTERY.length) state = State.FINISHED;
-                    else { beginPath(BATTERY[batteryIdx]); state = State.VERIFY_RUN; }
+                    else {
+                        PathLog.note("VERIFY " + (batteryIdx + 1));
+                        beginPath(BATTERY[batteryIdx]);
+                        state = State.VERIFY_RUN;
+                    }
                 }
                 break;
             case FINISHED:
@@ -502,7 +511,7 @@ public class PathTuner extends OpModeEX {
                 ? Math.abs(degPerSec())
                 : Math.hypot(odometry.getXVelocity(), odometry.getYVelocity());
         if (samples.size() < MAX_SAMPLES) {
-            samples.add(new double[]{t, v});
+            samples.add(new double[]{t, v, degPerSec()});
             double d = (Ax.values()[axIdx] == Ax.TURN) ? Math.abs(pushTurned)
                     : Math.hypot(odometry.X() - phaseStartX, odometry.Y() - phaseStartY);
             posSamples.add(new double[]{t, d});
@@ -522,6 +531,14 @@ public class PathTuner extends OpModeEX {
         for (double[] s : samples) if (s[1] > vBest) vBest = s[1];
         maxV[axIdx] = vBest;
         maxA[axIdx] = rampSlope(vBest) / maxPower;   // least-squares, normalised to per unit power
+        if (axIdx < 2) {
+            // mean yaw rate once up to speed
+            double sum = 0;
+            int n = 0;
+            for (double[] s : samples) if (s[1] >= 0.6 * vBest) { sum += s[2]; n++; }
+            pushYawOk[axIdx] = n >= 4 && vBest > 20;
+            pushYaw[axIdx] = n > 0 ? sum / n : 0;
+        }
         fitStep(axIdx);
         brakeSamples.clear();
         brakeV0 = 0;
@@ -641,6 +658,21 @@ public class PathTuner extends OpModeEX {
             model.turnV = stepV[tu] / (net > 0.1 ? net : maxPower);
             model.tauTurn = stepTau[tu];
             model.delayTurn = stepDelay[tu];
+        }
+        // Side balance: an imbalance d acts like a turn command d * power,
+        // i.e. a yaw rate of d * power * (turn speed per power). Additive on
+        // whatever trim was active during the push, so repeated tunes refine it.
+        double turnSpp = PathingValues.SPEED_PER_POWER_TURN;
+        if (maxV[tu] > 1 && turnSpp > 1) {
+            double m = PathingValues.MAX_SIDE_TRIM;
+            if (pushYawOk[f]) {
+                trimLrMeasured = pushYaw[f] / (turnSpp * maxPower);
+                PathingValues.SIDE_TRIM_LR = clamp(PathingValues.SIDE_TRIM_LR + trimLrMeasured, -m, m);
+            }
+            if (pushYawOk[st]) {
+                trimFbMeasured = pushYaw[st] / (turnSpp * maxPower);
+                PathingValues.SIDE_TRIM_FB = clamp(PathingValues.SIDE_TRIM_FB + trimFbMeasured, -m, m);
+            }
         }
         plantMeasured = true;
         rebuildFollowers();
@@ -890,6 +922,9 @@ public class PathTuner extends OpModeEX {
         curEnd = end;
         applyParams(ts, zeta, end);
         buildTunedFollower();
+        PathLog.note(sIdx < 2
+                ? String.format("SEARCH %s %s kEnd=%.2f velGain=%.2f", axisName(sIdx), stage, ts, zeta)
+                : String.format("SEARCH H %s ts=%.2f zeta=%.2f end=%.2f", stage, ts, zeta, end));
         beginPath(PROBE[sIdx]);
         state = State.SEARCH_PROBE;
     }
@@ -1198,6 +1233,7 @@ public class PathTuner extends OpModeEX {
     private int returnTries = 0;
 
     private void buildReturnPath() {
+        PathLog.note("RETURN " + state);
         returnTries = 0;
         rebuildReturnPath();
     }
@@ -1322,6 +1358,8 @@ public class PathTuner extends OpModeEX {
         telemetry.addData("brake decel F/S/T", String.format("%.0f / %.0f / %.0f   planned F/S %.0f / %.0f",
                 brakeDecel[0], brakeDecel[1], brakeDecel[2],
                 PathingValues.BRAKE_DECEL_FWD * PathingValues.DECEL_MARGIN, PathingValues.BRAKE_DECEL_STR * PathingValues.DECEL_MARGIN));
+        telemetry.addData("side trim L/R F/B", String.format("%+.1f%% / %+.1f%%   (push yaw %.1f / %.1f deg/s)",
+                PathingValues.SIDE_TRIM_LR * 100, PathingValues.SIDE_TRIM_FB * 100, pushYaw[0], pushYaw[1]));
         telemetry.addData("loop dt", String.format("%.1f ms   max wheel speed %.2f", loopDt * 1000,
                 driveBase.maxWheelSpeedFraction()));
         if (state == State.SEARCH_PROBE || state == State.SEARCH_RETURN) {
@@ -1419,6 +1457,9 @@ public class PathTuner extends OpModeEX {
             w.write(String.format("// heading ts=%.2f zeta=%.2f end=%.2f  phase margin fast %.0f slow %.0f deg\n",
                     model.tsH, model.zetaH, model.endH, model.pmFast, model.pmSlow));
             w.write(String.format("// best cost X/Y/H %.2f / %.2f / %.2f\n", bestCost[0], bestCost[1], bestCost[2]));
+            w.write(String.format("// side trim L/R %+.1f%%  F/B %+.1f%%  (push yaw fwd %.1f deg/s, strafe %.1f deg/s; this tune added %+.1f%% / %+.1f%%)\n",
+                    PathingValues.SIDE_TRIM_LR * 100, PathingValues.SIDE_TRIM_FB * 100, pushYaw[0], pushYaw[1],
+                    trimLrMeasured * 100, trimFbMeasured * 100));
             w.write("// To hard-code instead (set USE_TUNED_FILE = false), paste into PathingValues:\n");
             w.write(PathingValues.asJava());
             w.close();
