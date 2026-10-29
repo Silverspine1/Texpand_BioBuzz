@@ -1,0 +1,43 @@
+// PathTuner (self tuning) result
+// OUTPUT MODE: AS TESTED (saves POWER_LIMIT 0.70)
+// saved to /sdcard/FIRST/pathing_values.properties - loaded automatically by every new RobotConfig()
+// odometry noise  pos=0.00cm hdg=0.00deg  vel=0.0cm/s 0.0deg/s
+// derived tolerances  X=2.5 Y=2.5 cm  H=2.5 deg
+// measured maxV (at test power 0.70)  fwd=154 strafe=130 turn=453  [plateau false/false/true]
+// brake decel (protected reverse)  fwd=628 strafe=-0 turn=579
+// heading ts=0.67 zeta=0.70 end=1.33  phase margin fast 49 slow 49 deg
+// best cost X/Y/H 1.62 / 0.97 / 1.16
+// side trim L/R +3.2%  F/B -1.5%  (push yaw fwd 16.2 deg/s, strafe -7.4 deg/s; this tune added +3.2% / -1.5%)
+// To hard-code instead (set USE_TUNED_FILE = false), paste into PathingValues:
+    public static double BRAKE_CURRENT_MAX = 0.80000;
+    public static double BRAKE_CURRENT_RATE = 15;
+    public static double BRAKE_DECEL_FWD = 628.35;
+    public static double BRAKE_DECEL_STR = 314.96;
+    public static double DECEL_MARGIN = 0.85000;
+    public static double DELAY = 0.055000;
+    public static double DELAY_TURN = 0.040000;
+    public static double HEADING_FAST_D = 0.0028470;
+    public static double HEADING_FAST_P = 0.010864;
+    public static double HEADING_SLOW_D = 0.0028470;
+    public static double HEADING_SLOW_P = 0.010864;
+    public static double HOLD_H = 1.2500;
+    public static double HOLD_T = 2.5000;
+    public static double KS_FWD = 0.10192;
+    public static double KS_STR = 0.19268;
+    public static double KS_TURN = 0.063807;
+    public static double K_CROSS = 8;
+    public static double K_END_FWD = 24.483;
+    public static double K_END_STR = 13.346;
+    public static double LAT_ACCEL = 600;
+    public static double OVERSHOOT = 3;
+    public static double POWER_LIMIT = 0.70000;
+    public static double SIDE_TRIM_FB = -0.014910;
+    public static double SIDE_TRIM_LR = 0.032495;
+    public static double SPEED_PER_POWER_FWD = 335.66;
+    public static double SPEED_PER_POWER_STR = 255.59;
+    public static double SPEED_PER_POWER_TURN = 712.54;
+    public static double TAU_FWD = 0.46000;
+    public static double TAU_STR = 0.14000;
+    public static double TAU_TURN = 0.11000;
+    public static double VEL_GAIN_FWD = 2;
+    public static double VEL_GAIN_STR = 1;
