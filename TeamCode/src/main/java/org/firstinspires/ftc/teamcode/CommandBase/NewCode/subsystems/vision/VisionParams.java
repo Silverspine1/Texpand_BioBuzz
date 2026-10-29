@@ -10,17 +10,22 @@ package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.vision;
  */
 public final class VisionParams {
 
-    // ---- camera (see VisionSubsystem for the descriptions) ----
+    // ---- camera (see VisionSubsystem for the descriptions). Team mount: 20 cm fwd, 22 cm up, 50 deg down. ----
     public int workWidth = 320, workHeight = 240;
-    public double hfovDeg = 90;
-    public double camForwardCm = 18, camLeftCm = 0, camHeightCm = 25, camPitchDownDeg = 40, camYawDeg = 0;
+    public double hfovDeg = 120;
+    public double lensRectMix = 0.0;               // 0 = equidistant (ELP MHV120), 1 = pinhole
+    public double camForwardCm = 20, camLeftCm = 0, camHeightCm = 22, camPitchDownDeg = 50, camYawDeg = 0;
     public double ballRadiusCm = 3.556;            // POLLEN: 2.8 in diameter
 
     // ---- frame handedness: +1 = robot-left is (-sin h, cos h) in the odometry frame, -1 = mirrored ----
     public int lateralSign = -1;
 
     // ---- detector ----
-    public double scoreMin = 0.30, newMin = 0.18, floorPenalty = 1.0, sepFrac = 0.80;
+    public double scoreMin = 0.30, newMin = 0.18, floorPenalty = 1.0;
+    public double sepFrac = 0.80;                  // centres closer than this x 2R (on the floor) cannot both be balls
+    public double imgSepFrac = 0.55;               // same rule in the image: closer than this x (r1 + r2)
+    public double dupFrac = 0.35;                  // a pick blocks candidates this x 2R away (same ball)
+    public double uniqueMin = 0.04;                // fraction of its disc a ball must explain alone
     public double radiusScale = 1.0, minRadiusPx = 2.2, maxRangeCm = 200, holeFrac = 0.30;
     public int maxBalls = 24;
 

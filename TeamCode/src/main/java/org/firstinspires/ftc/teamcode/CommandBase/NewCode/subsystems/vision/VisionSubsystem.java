@@ -55,19 +55,31 @@ public class VisionSubsystem extends SubSystem {
     // 1. CAMERA  -  where it is and what it sees.  Measure these; they decide every distance it reports.
     // =====================================================================================================
     public static String CAMERA_NAME = "Webcam 1";
-    /** Horizontal field of view of the (undistorted) image, degrees. ELP wide-angle lens: try 90-110. */
-    public static double CAM_HFOV_DEG = 90;
-    /** Camera position from the chassis CENTRE: forward, left (+), up. cm. */
-    public static double CAM_FORWARD_CM = 18;
+    /**
+     * Horizontal field of view across the WHOLE captured image, degrees. ELP-USB100W07M-MHV120 is quoted FOV(H) 120 /
+     * FOV(D) 150 - that pair only fits a 4:3 picture with an EQUIDISTANT lens (150 = 1.25 x 120), so leave
+     * LENS_RECT_MIX at 0. If the camera is run in a 16:9 mode (1280x720) the horizontal FOV may differ: use the
+     * Vision Tuner's calibration (see VisionTuner) instead of trusting the number.
+     */
+    public static double CAM_HFOV_DEG = 120;
+    /**
+     * Lens shape: 0 = equidistant (angle proportional to pixel radius; the ELP wide-angle lens), 1 = plain pinhole
+     * (rectilinear). In between blends them. WRONG VALUE = wrong ball size = one ball split into several detections.
+     */
+    public static double LENS_RECT_MIX = 0.0;
+    /** Camera position from the chassis CENTRE: forward, left (+), up. cm. (Team measurement: 20 / 0 / 22.) */
+    public static double CAM_FORWARD_CM = 20;
     public static double CAM_LEFT_CM = 0;
-    public static double CAM_HEIGHT_CM = 25;
-    /** Tilt below horizontal, degrees (about 40 = looking down at the floor in front of the intake). */
-    public static double CAM_PITCH_DOWN_DEG = 40;
+    public static double CAM_HEIGHT_CM = 22;
+    /** Tilt below horizontal, degrees (team measurement: 50). */
+    public static double CAM_PITCH_DOWN_DEG = 50;
     /** Camera yaw, + = turned left, degrees. */
     public static double CAM_YAW_DEG = 0;
     /** Capture size sent by the camera, and the (smaller) size the detector works at. */
     public static int CAPTURE_WIDTH = 640, CAPTURE_HEIGHT = 480;
-    public static int WORK_WIDTH = 320, WORK_HEIGHT = 240;
+    public static int WORK_WIDTH = 320;
+    /** 0 = same aspect as the capture (never squash the picture: pixels must stay square). */
+    public static int WORK_HEIGHT = 0;
     /** Manual exposure (ms) and gain; keep exposure short so moving balls do not smear. */
     public static double EXPOSURE_MS = 10;
     public static double GAIN = 5;
@@ -140,9 +152,25 @@ public class VisionSubsystem extends SubSystem {
     public static int LATERAL_SIGN = -1;
 
     // =====================================================================================================
-    // 6. ADVANCED  -  detector / tracker.  Leave alone unless the Vision Tuner shows a reason.
+    // 6. DISPLAY  -  what the Dashboard camera stream shows (also X on gamepad1 in the Vision Tuner).
     // =====================================================================================================
-    public static double DET_SCORE_MIN = 0.30, DET_NEW_MIN = 0.18, DET_FLOOR_PENALTY = 1.0, DET_SEP_FRAC = 0.80;
+    /** 0 = camera + circled balls, 1 = yellow MASK, 2 = camera through the mask, 3 = camera | mask side by side. */
+    public static int VIEW = 3;
+    /** Draw red reference circles of the ball size the camera model expects (put a real ball on one to compare). */
+    public static boolean SHOW_EXPECTED_SIZE = false;
+    /** Half-size (px of the processed image) of the centre colour-sampling box. */
+    public static int CENTER_BOX_PX = 6;
+
+    // =====================================================================================================
+    // 7. ADVANCED  -  detector / tracker.  Leave alone unless the Vision Tuner shows a reason.
+    // =====================================================================================================
+    /**
+     * Impossible-overlap filter: two balls cannot overlap, so detections whose centres are closer than
+     * DET_SEP_FRAC x 2R on the floor (or DET_IMG_SEP_FRAC x (r1+r2) in the image) cannot both be real - the one that
+     * explains less of the mask on its own is dropped. This removes false balls between touching balls.
+     */
+    public static double DET_SEP_FRAC = 0.80, DET_IMG_SEP_FRAC = 0.55, DET_DUP_FRAC = 0.35, DET_UNIQUE_MIN = 0.04;
+    public static double DET_SCORE_MIN = 0.30, DET_NEW_MIN = 0.18, DET_FLOOR_PENALTY = 1.0;
     public static double DET_HOLE_CLOSE_FRAC = 0.30;
     public static double MAX_USE_RANGE_CM = 130;
     public static int CONFIRM_HITS = 2;
@@ -259,11 +287,15 @@ public class VisionSubsystem extends SubSystem {
     /** Copy every tunable above into a plain-data params object (called every loop, so Dashboard edits apply live). */
     public static VisionParams buildParams() {
         VisionParams v = new VisionParams();
-        v.workWidth = WORK_WIDTH; v.workHeight = WORK_HEIGHT; v.hfovDeg = CAM_HFOV_DEG;
+        v.workWidth = WORK_WIDTH;
+        v.workHeight = WORK_HEIGHT > 0 ? WORK_HEIGHT
+                : Math.max(2, (int) Math.round((double) WORK_WIDTH * CAPTURE_HEIGHT / Math.max(CAPTURE_WIDTH, 1)));
+        v.hfovDeg = CAM_HFOV_DEG; v.lensRectMix = Math.max(0, Math.min(1, LENS_RECT_MIX));
         v.camForwardCm = CAM_FORWARD_CM; v.camLeftCm = CAM_LEFT_CM; v.camHeightCm = CAM_HEIGHT_CM;
         v.camPitchDownDeg = CAM_PITCH_DOWN_DEG; v.camYawDeg = CAM_YAW_DEG; v.ballRadiusCm = BALL_RADIUS_CM;
         v.lateralSign = LATERAL_SIGN >= 0 ? 1 : -1;
         v.scoreMin = DET_SCORE_MIN; v.newMin = DET_NEW_MIN; v.floorPenalty = DET_FLOOR_PENALTY; v.sepFrac = DET_SEP_FRAC;
+        v.imgSepFrac = DET_IMG_SEP_FRAC; v.dupFrac = DET_DUP_FRAC; v.uniqueMin = DET_UNIQUE_MIN;
         v.holeFrac = DET_HOLE_CLOSE_FRAC; v.maxDetRangeCm = MAX_USE_RANGE_CM;
         v.confirmHits = CONFIRM_HITS; v.gateCm = ASSOCIATION_GATE_CM; v.memoryS = MEMORY_S;
         v.intakeForwardCm = INTAKE_FORWARD_CM; v.intakeWidthCm = INTAKE_WIDTH_CM;
@@ -319,12 +351,17 @@ public class VisionSubsystem extends SubSystem {
         return new double[]{op.odometry.X(), op.odometry.Y(), op.odometry.Heading()};
     }
 
+    /** Changes whenever anything that needs the camera / detector tables rebuilt changes. Shared with the Vision Tuner. */
+    public static double geometryKey(VisionParams v) {
+        return java.util.Arrays.hashCode(new double[]{v.workWidth, v.workHeight, v.hfovDeg, v.lensRectMix, v.camForwardCm,
+                v.camLeftCm, v.camHeightCm, v.camPitchDownDeg, v.camYawDeg, v.ballRadiusCm, v.lateralSign, v.scoreMin,
+                v.newMin, v.floorPenalty, v.sepFrac, v.imgSepFrac, v.dupFrac, v.uniqueMin, v.holeFrac, v.maxDetRangeCm,
+                v.radiusScale, v.minRadiusPx});
+    }
+
     private void rebuildIfGeometryChanged() {
         VisionParams v = buildParams();
-        double key = v.workWidth * 1.0 + v.workHeight * 3.1 + v.hfovDeg * 7.3 + v.camForwardCm * 11.7 + v.camLeftCm * 13.1
-                + v.camHeightCm * 17.9 + v.camPitchDownDeg * 19.3 + v.camYawDeg * 23.7 + v.ballRadiusCm * 29.1
-                + v.lateralSign * 31.3 + v.scoreMin * 37 + v.newMin * 41 + v.floorPenalty * 43 + v.sepFrac * 47 + v.holeFrac * 53
-                + v.maxDetRangeCm * 59 + v.intakeForwardCm * 61 + v.intakeSideTolCm * 67 + v.intakeOffsetCm * 71;
+        double key = geometryKey(v);
         params = v;
         if (camera == null || key != geometryKey) {
             geometryKey = key;

@@ -32,7 +32,7 @@ public final class PathLog {
             "x", "y", "h", "vx", "vy",
             "endX", "endY", "err", "errAlong", "errCross", "toGo",
             "vTarget", "vCmdF", "vCmdS", "aCmdF", "aCmdS", "vMeasF", "vMeasS",
-            "pF", "pS", "turn", "hdgTarget", "hdgErr", "hdgRate", "softHdg"
+            "pF", "pS", "turn", "hdgTarget", "hdgErr", "hdgRate", "hdgHold"
     };
 
     private static String tag = null;

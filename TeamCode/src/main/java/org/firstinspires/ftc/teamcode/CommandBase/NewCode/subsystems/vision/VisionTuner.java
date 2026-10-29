@@ -8,49 +8,60 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 import org.firstinspires.ftc.vision.VisionPortal;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * VISION TUNER - tune the camera and the ball colour against live data, no robot hardware needed except the camera.
+ * VISION TUNER - tune the ball colour and the camera model against live data (only the camera is needed).
  *
- *  Open FTC Dashboard (http://192.168.43.1:8080/dash): the camera stream shows every ball circled with the
- *  distance the robot thinks it is away; Configuration > VisionSubsystem holds every number (camera FOV, mount,
- *  HSV, intake width and side tolerance, ...). Edits apply live.
+ *  Open FTC Dashboard (http://192.168.43.1:8080/dash). The camera stream shows the camera and the yellow MASK
+ *  side by side (change with VisionSubsystem.VIEW or X): every ball is circled with the distance the robot thinks it is
+ *  away, the centre box shows the live HSV, and on the mask panel a CYAN circle (measured ball-blob radius) is compared
+ *  with a RED circle (the size the camera model expects there). Configuration > VisionSubsystem holds every number.
  *
- *  gamepad1:
- *    A  sample the ball colour: put a ball in the CENTRE of the picture, press A - HSV low/high are filled in
- *    B  save every VisionSubsystem value to /sdcard/FIRST/vision_tune.properties (loaded on every start)
- *    X  next view: camera + circles -> yellow mask -> camera through the mask
- *    Y  calibrate the camera tilt from a known distance: put ONE ball TUNER_KNOWN_FORWARD_CM in front of the chassis
- *       centre (measure it!), press Y - CAM_PITCH_DOWN_DEG is adjusted so the reported distance matches.
- *       Repeat at a second distance: if the two still disagree, CAM_HEIGHT_CM is wrong - nudge it.
- *    D-pad up/down  CAM_HFOV_DEG +/- 1  (a wrong FOV shows as sideways error that grows with bearing)
- *    Back  load the saved file again,   Start  delete the saved file
+ *  gamepad1
+ *    A   sample the ball colour: ball in the CENTRE box -> HSV window filled in
+ *    B   save every VisionSubsystem value to /sdcard/FIRST/vision_tune.properties (loaded on every start)
+ *    X   next view (camera / mask / masked camera / side by side)
+ *    D-pad up / down      CAM_HFOV_DEG  +1 / -1
+ *    D-pad right / left   LENS_RECT_MIX +0.05 / -0.05  (0 = equidistant fisheye-like, 1 = pinhole)
+ *    --- camera calibration (fits pitch, FOV and lens shape from balls at measured spots) ---
+ *    Y   add a mark: ONE ball in view at the spot given by TUNER_MARK_FORWARD_CM / TUNER_MARK_LEFT_CM
+ *        (cm from the CHASSIS CENTRE: forward, left +). Move the ball, edit the two numbers, press Y again.
+ *    LB  fit the marks -> CAM_PITCH_DOWN_DEG, CAM_HFOV_DEG, LENS_RECT_MIX are set; RB clear the marks
+ *    Back load the saved file again, Start delete the saved file
  *
- *  What to check: the list below the picture gives, for each ball, forward and left in cm FROM THE CHASSIS CENTRE.
- *  Measure a few with a tape. Forward wrong -> tilt/height (Y). Left wrong, worse at the edges -> FOV.
+ *  Quick check without marks: put ONE ball in the middle of the picture. If the cyan circle is clearly bigger than the
+ *  red one, the model thinks balls are smaller than they are -> reduce CAM_HFOV_DEG (printed as "try HFOV"). Do the
+ *  same with the ball near the left / right edge: if only the edges are wrong the lens shape (LENS_RECT_MIX) is off.
+ *  Marks: use 5-8, some straight ahead at different distances and some well off to each side.
  */
 @Config
 @TeleOp(name = "Vision Tuner", group = "tuning")
 public class VisionTuner extends LinearOpMode {
 
-    /** Distance from the chassis centre to the ball centre, cm, for the Y calibration. */
-    public static double TUNER_KNOWN_FORWARD_CM = 60;
+    /** Where the ball for the next calibration mark is, cm from the chassis centre. */
+    public static double TUNER_MARK_FORWARD_CM = 60, TUNER_MARK_LEFT_CM = 0;
+    /** Fit the lens mix as well as pitch and FOV (turn off to keep the lens shape fixed). */
+    public static boolean FIT_LENS_MIX = true;
 
     @Override
     public void runOpMode() {
         telemetry = new MultipleTelemetry(telemetry, FtcDashboard.getInstance().getTelemetry());
         VisionTuneFile.load();
+        VisionSubsystem.SHOW_EXPECTED_SIZE = true;
         BallVisionProcessor proc = new BallVisionProcessor();
         VisionPortal portal = VisionSubsystem.buildPortal(hardwareMap, proc);
         FtcDashboard.getInstance().startCameraStream(proc, 15);
 
         VisionParams params = VisionSubsystem.buildParams();
-        BallCamera cam = new BallCamera(params);
         double key = Double.NaN;
         boolean controls = false;
         String status = "";
-        boolean lastA = false, lastB = false, lastX = false, lastY = false, lastUp = false, lastDown = false, lastBack = false, lastStart = false;
+        List<CameraFit.Mark> marks = new ArrayList<>();
+        String fitText = "no fit yet";
+        boolean lastA = false, lastB = false, lastX = false, lastY = false, lastUp = false, lastDown = false, lastLeft = false,
+                lastRight = false, lastBack = false, lastStart = false, lastLb = false, lastRb = false;
 
         telemetry.addLine("Vision Tuner ready. Dashboard: camera stream + Configuration > VisionSubsystem");
         telemetry.update();
@@ -59,23 +70,23 @@ public class VisionTuner extends LinearOpMode {
         while (opModeIsActive()) {
             if (!controls) controls = VisionSubsystem.applyCameraControls(portal);
             params = VisionSubsystem.buildParams();
-            double k = params.workWidth + params.workHeight * 3.1 + params.hfovDeg * 7.3 + params.camForwardCm * 11.7
-                    + params.camLeftCm * 13.1 + params.camHeightCm * 17.9 + params.camPitchDownDeg * 19.3 + params.camYawDeg * 23.7
-                    + params.ballRadiusCm * 29.1 + params.scoreMin * 37 + params.newMin * 41 + params.floorPenalty * 43
-                    + params.sepFrac * 47 + params.holeFrac * 53 + params.maxDetRangeCm * 59;
+            double k = VisionSubsystem.geometryKey(params);
             if (k != key) {
                 key = k;
-                cam = new BallCamera(params);
+                BallCamera cam = new BallCamera(params);
                 proc.configure(cam, new ClusterDetector(cam), params);
             } else {
                 proc.setParams(params);
             }
 
             boolean a = gamepad1.a, b = gamepad1.b, x = gamepad1.x, y = gamepad1.y;
-            boolean up = gamepad1.dpad_up, down = gamepad1.dpad_down, back = gamepad1.back, start = gamepad1.start;
+            boolean up = gamepad1.dpad_up, down = gamepad1.dpad_down, left = gamepad1.dpad_left, right = gamepad1.dpad_right;
+            boolean back = gamepad1.back, start = gamepad1.start, lb = gamepad1.left_bumper, rb = gamepad1.right_bumper;
+            BallVisionProcessor.Result r = proc.latest();
+
             if (a && !lastA) {
                 double[] s = proc.sampleCenterHsv();
-                if (s == null) status = "A: no ball colour in the centre box - centre a ball and try again";
+                if (s == null) status = "A: the centre box is not on a ball colour - put a ball in the box and try again";
                 else {
                     VisionSubsystem.H_LOW = Math.max(0, s[0] - VisionSubsystem.AUTO_H_MARGIN);
                     VisionSubsystem.H_HIGH = Math.min(179, s[0] + VisionSubsystem.AUTO_H_MARGIN);
@@ -95,19 +106,42 @@ public class VisionTuner extends LinearOpMode {
                     status = "B: SAVE FAILED " + e.getMessage();
                 }
             }
-            if (x && !lastX) BallVisionProcessor.VIEW = (BallVisionProcessor.VIEW + 1) % 3;
-            if (y && !lastY) status = calibratePitch(proc, params, cam);
+            if (x && !lastX) VisionSubsystem.VIEW = (VisionSubsystem.VIEW + 1) % 4;
             if (up && !lastUp) VisionSubsystem.CAM_HFOV_DEG += 1;
             if (down && !lastDown) VisionSubsystem.CAM_HFOV_DEG -= 1;
+            if (right && !lastRight) VisionSubsystem.LENS_RECT_MIX = Math.min(1, VisionSubsystem.LENS_RECT_MIX + 0.05);
+            if (left && !lastLeft) VisionSubsystem.LENS_RECT_MIX = Math.max(0, VisionSubsystem.LENS_RECT_MIX - 0.05);
+            if (y && !lastY) {
+                if (r == null || r.blob == null) status = "Y: no ball blob in view";
+                else if (r.blobCount > 1) status = "Y: " + r.blobCount + " separate blobs in view - leave ONE ball in view";
+                else {
+                    marks.add(new CameraFit.Mark(r.blob.u, r.blob.v, TUNER_MARK_FORWARD_CM, TUNER_MARK_LEFT_CM));
+                    status = String.format("Y: mark %d added: pixel (%.0f, %.0f) = ball at %.0f fwd / %.0f left cm", marks.size(),
+                            r.blob.u, r.blob.v, TUNER_MARK_FORWARD_CM, TUNER_MARK_LEFT_CM);
+                }
+            }
+            if (rb && !lastRb) { marks.clear(); status = "RB: marks cleared"; }
+            if (lb && !lastLb) {
+                CameraFit.Result fr = CameraFit.fit(params, marks, FIT_LENS_MIX);
+                if (fr.ok) {
+                    VisionSubsystem.CAM_PITCH_DOWN_DEG = fr.pitchDeg;
+                    VisionSubsystem.CAM_HFOV_DEG = fr.hfovDeg;
+                    VisionSubsystem.LENS_RECT_MIX = fr.mix;
+                }
+                fitText = String.format("%s: error %.1f -> %.1f cm RMS; tilt %.1f, HFOV %.1f, lens mix %.2f", fr.note, fr.rmsBeforeCm, fr.rmsCm,
+                        fr.pitchDeg, fr.hfovDeg, fr.mix);
+                status = "LB: " + fitText;
+            }
             if (back && !lastBack) status = "Back: loaded " + VisionTuneFile.load() + " saved values";
             if (start && !lastStart) status = VisionTuneFile.delete() ? "Start: saved file deleted" : "Start: no saved file";
-            lastA = a; lastB = b; lastX = x; lastY = y; lastUp = up; lastDown = down; lastBack = back; lastStart = start;
+            lastA = a; lastB = b; lastX = x; lastY = y; lastUp = up; lastDown = down; lastLeft = left; lastRight = right;
+            lastBack = back; lastStart = start; lastLb = lb; lastRb = rb;
 
-            BallVisionProcessor.Result r = proc.latest();
             telemetry.addData("camera", portal.getCameraState());
             telemetry.addData("fps / detect ms", r == null ? "-" : String.format("%.1f / %.1f", r.fps, r.procMs));
-            telemetry.addData("view (X)", BallVisionProcessor.VIEW);
-            telemetry.addData("FOV / tilt / height", "%.1f deg / %.1f deg / %.1f cm", params.hfovDeg, params.camPitchDownDeg, params.camHeightCm);
+            telemetry.addData("view (X) / VIEW", VisionSubsystem.VIEW);
+            telemetry.addData("camera model", "HFOV %.1f deg  lens mix %.2f  tilt %.1f deg  height %.1f cm  forward %.1f cm", params.hfovDeg,
+                    params.lensRectMix, params.camPitchDownDeg, params.camHeightCm, params.camForwardCm);
             telemetry.addData("HSV window", "H %.0f-%.0f  S %.0f-%.0f  V %.0f-%.0f", VisionSubsystem.H_LOW, VisionSubsystem.H_HIGH,
                     VisionSubsystem.S_LOW, VisionSubsystem.S_HIGH, VisionSubsystem.V_LOW, VisionSubsystem.V_HIGH);
             double[] raw = proc.centerRawHsv();
@@ -117,20 +151,30 @@ public class VisionTuner extends LinearOpMode {
                 boolean in = raw[0] >= VisionSubsystem.H_LOW && raw[0] <= VisionSubsystem.H_HIGH
                         && raw[1] >= VisionSubsystem.S_LOW && raw[1] <= VisionSubsystem.S_HIGH
                         && raw[2] >= VisionSubsystem.V_LOW && raw[2] <= VisionSubsystem.V_HIGH;
-                telemetry.addData("centre HSV (box median)", "H %.0f  S %.0f  V %.0f   -> %s the window",
-                        raw[0], raw[1], raw[2], in ? "INSIDE" : "OUTSIDE");
+                telemetry.addData("centre HSV (box median)", "H %.0f  S %.0f  V %.0f   -> %s the window", raw[0], raw[1], raw[2], in ? "INSIDE" : "OUTSIDE");
             }
             double[] s = proc.sampleCenterHsv();
             telemetry.addData("centre ball colour (A uses this)", s == null ? "box is not on a ball (too dark / grey)"
                     : String.format("%.0f / %.0f / %.0f", s[0], s[1], s[2]));
+            if (r != null && r.blob != null) {
+                double ratio = r.blob.ratio();
+                String hint = r.blobCount > 1 ? "several blobs: size check needs ONE ball"
+                        : Math.abs(ratio - 1) < 0.08 ? "size OK"
+                        : String.format("ball looks %s than the model expects -> try HFOV %.0f (mix 0)", ratio > 1 ? "BIGGER" : "SMALLER",
+                                params.hfovDeg / ratio);
+                telemetry.addData("ball size check", "measured r %.1f px  model r %.1f px  ratio %.2f  (%s)", r.blob.measuredR, r.blob.expectedR, ratio, hint);
+            }
+            telemetry.addData("calibration marks", "%d (Y add, LB fit, RB clear) next ball spot: %.0f fwd / %.0f left cm", marks.size(),
+                    TUNER_MARK_FORWARD_CM, TUNER_MARK_LEFT_CM);
+            telemetry.addData("last fit", fitText);
             telemetry.addData("status", status);
             if (r != null) {
                 telemetry.addData("balls seen", r.detections.size());
                 int i = 0;
                 for (ClusterDetector.Detection d : r.detections) {
                     i++;
-                    telemetry.addData("#" + i, "fwd %.1f  left %+.1f  range %.1f cm  bearing %+.1f deg  r=%.0f px  score %.2f",
-                            d.xr, d.yr, d.rangeCm(), d.bearingDeg(), d.radiusPx, d.score);
+                    telemetry.addData("#" + i, "fwd %.1f  left %+.1f  range %.1f cm  bearing %+.1f deg  r=%.0f px  unique %.2f", d.xr, d.yr, d.rangeCm(),
+                            d.bearingDeg(), d.radiusPx, d.unique);
                     if (i >= 8) break;
                 }
             }
@@ -139,26 +183,5 @@ public class VisionTuner extends LinearOpMode {
         }
         FtcDashboard.getInstance().stopCameraStream();
         portal.close();
-    }
-
-    /** Adjust CAM_PITCH_DOWN_DEG so the nearest ball reads TUNER_KNOWN_FORWARD_CM forward. */
-    private String calibratePitch(BallVisionProcessor proc, VisionParams params, BallCamera cam) {
-        BallVisionProcessor.Result r = proc.latest();
-        if (r == null || r.detections.isEmpty()) return "Y: no ball in view";
-        ClusterDetector.Detection d = r.detections.get(0);
-        double lo = VisionSubsystem.CAM_PITCH_DOWN_DEG - 12, hi = VisionSubsystem.CAM_PITCH_DOWN_DEG + 12;
-        // the pixel row of the ball is what was measured; find the pitch whose ground point for that pixel is the known distance
-        for (int it = 0; it < 40; it++) {
-            double mid = 0.5 * (lo + hi);
-            VisionParams t = VisionSubsystem.buildParams();
-            t.camPitchDownDeg = mid;
-            double[] g = new BallCamera(t).groundPoint(d.u, d.v, t.ballRadiusCm);
-            double fwd = g == null ? 1e9 : g[0];
-            // looking further down (bigger pitch) pulls the ground point toward the robot
-            if (fwd > TUNER_KNOWN_FORWARD_CM) lo = mid; else hi = mid;
-        }
-        double before = VisionSubsystem.CAM_PITCH_DOWN_DEG;
-        VisionSubsystem.CAM_PITCH_DOWN_DEG = 0.5 * (lo + hi);
-        return String.format("Y: tilt %.1f -> %.1f deg (ball at %.0f cm forward)", before, VisionSubsystem.CAM_PITCH_DOWN_DEG, TUNER_KNOWN_FORWARD_CM);
     }
 }

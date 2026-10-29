@@ -87,7 +87,7 @@ if (!pathing) {
         telemetry.addData("Velocity X (cm/s)", odometry.getXVelocity());
         telemetry.addData("Velocity Y (cm/s)", odometry.getYVelocity());
         if (pathing) {
-            RobotPower cp = follow.followPathAuto(heading, odometry.Heading(), odometry.X(), odometry.Y(), odometry.getXVelocity(), odometry.getYVelocity());
+            RobotPower cp = follow.followPathAuto(heading, odometry.Heading(), odometry.X(), odometry.Y(), odometry.getXVelocity(), odometry.getYVelocity(), odometry.getHeadingVelocityDeg());
             driveBase.queueCommand(driveBase.drivePowers(cp));
         }
     }

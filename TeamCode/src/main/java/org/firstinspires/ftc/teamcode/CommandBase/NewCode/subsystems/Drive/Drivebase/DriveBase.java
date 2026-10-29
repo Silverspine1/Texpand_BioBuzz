@@ -210,6 +210,14 @@ public class DriveBase extends SubSystem implements PathLog.Extras {
         }
     }
 
+    /** Forward / strafe / turn power the wheels were actually given in the last
+     *  drive execute (after side trim and the braking ramp). Turn + = heading
+     *  increasing. */
+    public double[] appliedAxisPowers() {
+        double lf = wheelOut[0], rf = wheelOut[1], lb = wheelOut[2], rb = wheelOut[3];
+        return new double[]{(lf + rf + lb + rb) / 4, (lf - rf - lb + rb) / 4, (lf - rf + lb - rb) / 4};
+    }
+
     /** Largest |wheel speed| fraction right now (for telemetry / tuning). */
     public double maxWheelSpeedFraction() {
         double m = 0;

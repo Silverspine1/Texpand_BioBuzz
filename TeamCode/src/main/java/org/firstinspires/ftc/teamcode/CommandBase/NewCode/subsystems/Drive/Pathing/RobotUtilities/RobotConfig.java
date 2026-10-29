@@ -31,8 +31,9 @@ public class RobotConfig {
     // holds
     public double holdT, holdH;
 
-    // heading PD, D per second
-    public double headingFastP, headingFastD, headingSlowP, headingSlowD;
+    // heading profile
+    public double speedPerPowerTurn, tauTurn, delayTurn, brakeDecelTurn;
+    public double kEndH, velGainH, overshootH;
 
     boolean logDebugging = false;
 
@@ -59,10 +60,13 @@ public class RobotConfig {
         kCross = PathingValues.K_CROSS;
         holdT = PathingValues.HOLD_T;
         holdH = PathingValues.HOLD_H;
-        headingFastP = PathingValues.HEADING_FAST_P;
-        headingFastD = PathingValues.HEADING_FAST_D;
-        headingSlowP = PathingValues.HEADING_SLOW_P;
-        headingSlowD = PathingValues.HEADING_SLOW_D;
+        speedPerPowerTurn = PathingValues.SPEED_PER_POWER_TURN;
+        tauTurn = PathingValues.TAU_TURN;
+        delayTurn = PathingValues.DELAY_TURN;
+        brakeDecelTurn = PathingValues.BRAKE_DECEL_TURN;
+        kEndH = PathingValues.K_END_H;
+        velGainH = PathingValues.VEL_GAIN_H;
+        overshootH = PathingValues.OVERSHOOT_H;
     }
 
     /** Highest forward speed the profile may ask for, cm/s. */
@@ -97,15 +101,9 @@ public class RobotConfig {
         this.logDebugging = logDebugging;
     }
 
-    public RobotConfig setFastHeadingPD(double p, double dPerSecond) {
-        headingFastP = p;
-        headingFastD = dPerSecond;
-        return this;
-    }
-
-    public RobotConfig setSlowHeadingPD(double p, double dPerSecond) {
-        headingSlowP = p;
-        headingSlowD = dPerSecond;
+    public RobotConfig setHeadingGains(double kEnd, double velGain) {
+        kEndH = kEnd;
+        velGainH = velGain;
         return this;
     }
 
@@ -123,8 +121,9 @@ public class RobotConfig {
         return this;
     }
 
-    public RobotConfig setOvershoot(double cm) {
+    public RobotConfig setOvershoot(double cm, double deg) {
         overshoot = cm;
+        overshootH = deg;
         return this;
     }
 

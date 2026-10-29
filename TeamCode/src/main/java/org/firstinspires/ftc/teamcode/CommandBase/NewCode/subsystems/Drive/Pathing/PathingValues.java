@@ -19,9 +19,9 @@ import java.util.Properties;
  *   - by hand: edit the defaults below (and set USE_TUNED_FILE = false, or
  *     delete the file, so a saved tune does not override them), or
  *   - with PathTuner: it measures / tunes the drive model, end gains, holds,
- *     heading PD and POWER_LIMIT and saves them to FILE, which is loaded over
+ *     overshoots and POWER_LIMIT and saves them to FILE, which is loaded over
  *     these defaults the first time any pathing code runs. Everything else
- *     here (margins, overshoot, motor protection, ...) is never saved, so
+ *     here (margins, corner accel, motor protection, ...) is never saved, so
  *     editing it in code always takes effect.
  *
  * Units: cm, deg, s, motor power (0..1). Robot frame: FWD = forward,
@@ -64,11 +64,11 @@ public final class PathingValues {
     public static double HOLD_T = 2.5;                 // cm - translation output 0 inside this
     public static double HOLD_H = 1.25;                // deg - turn output 0 inside this
 
-    // ---- heading PD (D per SECOND) ----
-    public static double HEADING_FAST_P = 0.012;
-    public static double HEADING_FAST_D = 0.0035;
-    public static double HEADING_SLOW_P = 0.008;
-    public static double HEADING_SLOW_D = 0.003;
+    // ---- heading profile (same shape as translation) ----
+    public static double BRAKE_DECEL_TURN = 600;       // deg/s^2 the protected drive can stop a turn at
+    public static double K_END_H = 10;                 // 1/s - heading final approach stiffness
+    public static double VEL_GAIN_H = 1.0;             // turn-rate error feedback
+    public static double OVERSHOOT_H = 2.0;            // deg - planned overshoot past the target heading
 
     // ---- drive side balance (PathTuner measures these) ----
     // A side that pushes harder makes the robot yaw when it should drive
@@ -90,8 +90,8 @@ public final class PathingValues {
             "TAU_FWD", "TAU_STR", "TAU_TURN", "DELAY", "DELAY_TURN",
             "KS_FWD", "KS_STR", "KS_TURN", "BRAKE_DECEL_FWD", "BRAKE_DECEL_STR",
             "POWER_LIMIT", "K_END_FWD", "K_END_STR", "VEL_GAIN_FWD", "VEL_GAIN_STR",
-            "HOLD_T", "HOLD_H", "SIDE_TRIM_LR", "SIDE_TRIM_FB",
-            "HEADING_FAST_P", "HEADING_FAST_D", "HEADING_SLOW_P", "HEADING_SLOW_D"));
+            "HOLD_T", "HOLD_H", "SIDE_TRIM_LR", "SIDE_TRIM_FB", "OVERSHOOT",
+            "BRAKE_DECEL_TURN", "K_END_H", "VEL_GAIN_H", "OVERSHOOT_H"));
 
     private static boolean loaded = false;
 
