@@ -1,5 +1,6 @@
 package dev.weaponboy.nexus_pathing.Follower;
 
+import dev.weaponboy.nexus_pathing.PathingUtility.RobotPower;
 import dev.weaponboy.nexus_pathing.RobotUtilities.Vector2D;
 
 /**
@@ -13,6 +14,7 @@ import dev.weaponboy.nexus_pathing.RobotUtilities.Vector2D;
 public final class FollowerPrimer {
 
     private static final double END_ZONE = 3;   // matches Follower.followPathAuto
+    private static final double SLOW_IN = 3, SLOW_OUT = 6;   // deg, heading PID hand-over
 
     private FollowerPrimer() {}
 
@@ -43,4 +45,34 @@ public final class FollowerPrimer {
         f.fastHeadingPID.calculate(-rot);
         f.slowHeadingPID.calculate(-rot);
     }
+
+    /**
+     * One control step in place of followPathAuto (path headings off). The
+     * library only ever runs its fast heading PID; this hands heading to the
+     * soft slow PID near the target (with hysteresis, the idle PID kept primed
+     * so the hand-over has no D kick), and outputs 0 turn inside holdTol so
+     * stiction / gear lash cannot sustain a small limit cycle. Outside holdTol
+     * turnKs (breakaway power) is added toward the target, so the soft,
+     * delay-safe gains still finish the turn instead of stalling short.
+     */
+    public static RobotPower follow(Follower f, double targetHeading, double holdTol, double turnKs,
+                                    double H, double X, double Y, double XV, double YV) {
+        prime(f, H, X, Y);
+        double rot = targetHeading - H;
+        while (rot > 180) rot -= 360;
+        while (rot < -180) rot += 360;
+        double a = Math.abs(rot);
+        if (f.slowerHeading) {
+            if (a > SLOW_OUT) f.slowerHeading = false;
+        } else if (a < SLOW_IN) {
+            f.slowerHeading = true;
+        }
+        (f.slowerHeading ? f.fastHeadingPID : f.slowHeadingPID).calculate(-rot);
+        RobotPower p = f.followPathAuto(targetHeading, H, X, Y, XV, YV);
+        if (f.slowerHeading && a <= holdTol) p = new RobotPower(p.getVertical(), p.getHorizontal(), 0);
+        else if (a > holdTol) p = new RobotPower(p.getVertical(), p.getHorizontal(), p.getPivot() - Math.signum(rot) * turnKs);
+        return p;
+    }
+
+    public static boolean softHeading(Follower f) { return f.slowerHeading; }
 }

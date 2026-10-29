@@ -10,6 +10,7 @@ import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
 
 import dev.weaponboy.nexus_command_base.Commands.Execute;
 import dev.weaponboy.nexus_pathing.Follower.Follower;
+import dev.weaponboy.nexus_pathing.Follower.FollowerPrimer;
 import dev.weaponboy.nexus_pathing.PathGeneration.PathsManager;
 import dev.weaponboy.nexus_pathing.PathGeneration.commands.SectionBuilder;
 import dev.weaponboy.nexus_pathing.PathingUtility.RobotPower;
@@ -101,7 +102,7 @@ if (!pathing) {
         telemetry.addData("Velocity X (cm/s)", odometry.getXVelocity());
         telemetry.addData("Velocity Y (cm/s)", odometry.getYVelocity());
         if (pathing) {
-            RobotPower cp = follow.followPathAuto(heading, odometry.Heading(), odometry.X(), odometry.Y(), odometry.getXVelocity(), odometry.getYVelocity());
+            RobotPower cp = FollowerPrimer.follow(follow, heading, 1.25, 0,odometry.Heading(), odometry.X(), odometry.Y(), odometry.getXVelocity(), odometry.getYVelocity());
             driveBase.queueCommand(driveBase.drivePowers(cp));
         }
     }

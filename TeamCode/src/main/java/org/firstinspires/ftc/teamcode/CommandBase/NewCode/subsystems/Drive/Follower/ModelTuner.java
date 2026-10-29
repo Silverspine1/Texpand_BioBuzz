@@ -60,7 +60,15 @@ public class ModelTuner {
     //   end  - endpoint settling time as a multiple of ts (bigger = softer hold)
     public double tsX = 0.55, tsY = 0.55, tsH = 0.60;
     public double zetaX = 1.0, zetaY = 1.0, zetaH = 1.0;
-    public double endX = 4.0 / 3.0, endY = 4.0 / 3.0;
+    public double endX = 4.0 / 3.0, endY = 4.0 / 3.0, endH = 1.5;
+
+    // Measured turn step response (first order + dead time), per unit power:
+    // speed = turnV / (tauTurn*s + 1) * e^(-delayTurn*s). turnV <= 0 = unknown.
+    // Used to cap heading gains at a phase margin of PM_MIN - the delay is
+    // what turned high heading gains into a small, violent limit cycle.
+    public double turnV = 0, tauTurn = 0.1, delayTurn = 0.03;
+    private static final double PM_MIN = 45;
+    public double pmFast = Double.NaN, pmSlow = Double.NaN;   // deg, after capping
 
     // Measured control-loop period (s). Saved D gains are only valid at a
     // similar loop time.
@@ -119,7 +127,11 @@ public class ModelTuner {
         ex = capToPath(ex, px, aFwd, zetaX);
         ey = capToPath(ey, py, aStr, zetaY);
         double[] hf = pd(aTurn, tsH, zetaH, 0, stictionFloor(ksTurn, 10));
-        double[] hs = pd(aTurn, tsH * 1.5, zetaH, endCap(ksTurn, tolH), stictionFloor(ksTurn, 3 * tolH));
+        double[] hs = pd(aTurn, tsH * endH, zetaH, endCap(ksTurn, tolH), stictionFloor(ksTurn, 3 * tolH));
+        hf = marginCap(hf, aTurn, zetaH);
+        hs = marginCap(capToPath(hs, hf, aTurn, zetaH), aTurn, zetaH);
+        pmFast = phaseMargin(hf[0], hf[1]);
+        pmSlow = phaseMargin(hs[0], hs[1]);
 
         // Nexus PIDs take D as kd * (error - previousError) PER LOOP, not per
         // second, so the time-based Kd is divided by the loop period.
@@ -137,6 +149,40 @@ public class ModelTuner {
         double kp = path[0];
         double kd = clamp(2.0 * zeta * Math.sqrt(kp / A), 0, KD_MAX);
         return new double[]{kp, kd};
+    }
+
+    /** Lowers kp (kd re-derived, same zeta) until the heading loop has at
+     *  least PM_MIN phase margin on the measured plant. Overrides the stiction
+     *  floor: a loop that cannot be stable is worse than one that stops a
+     *  little short (the hold deadband deals with stiction). */
+    private double[] marginCap(double[] g, double A, double zeta) {
+        if (turnV <= 0) return g;
+        if (A <= 1.0) A = 1.0;
+        double kp = g[0], kd = g[1];
+        for (int n = 0; n < 80 && phaseMargin(kp, kd) < PM_MIN && kp > KP_MIN; n++) {
+            kp *= 0.9;
+            kd = clamp(2.0 * zeta * Math.sqrt(kp / A), 0, KD_MAX);
+        }
+        return new double[]{kp, kd};
+    }
+
+    /** Phase margin (deg) of PD (kd per second) on turnV*e^(-sT)/(s(tau s+1)),
+     *  with T = measured delay + one loop (zero-order hold + backward-difference D). */
+    public double phaseMargin(double kp, double kd) {
+        if (turnV <= 0) return Double.NaN;
+        double tau = Math.max(0.005, tauTurn), T = Math.max(0, delayTurn) + loopDt;
+        double lo = Math.log(0.05), hi = Math.log(2000);
+        for (int n = 0; n < 60; n++) {
+            double mid = 0.5 * (lo + hi);
+            if (loopMag(Math.exp(mid), kp, kd, tau) > 1) lo = mid; else hi = mid;
+        }
+        double w = Math.exp(0.5 * (lo + hi));
+        double ph = Math.atan2(w * kd, kp) - Math.PI / 2 - Math.atan(w * tau) - w * T;
+        return 180 + Math.toDegrees(ph);
+    }
+
+    private double loopMag(double w, double kp, double kd, double tau) {
+        return turnV * Math.hypot(kp, w * kd) / (w * Math.hypot(1, w * tau));
     }
 
     private static double clamp(double v, double lo, double hi) {

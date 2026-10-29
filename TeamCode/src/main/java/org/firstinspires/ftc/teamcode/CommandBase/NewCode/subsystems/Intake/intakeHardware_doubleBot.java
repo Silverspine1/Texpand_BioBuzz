@@ -64,7 +64,6 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
                   ITMFcurrentPower = 0;
                   ITMBcurrentPower = 0;
 
-                  IntakingDrection = 0;
                   break;
 
               case intaking:
