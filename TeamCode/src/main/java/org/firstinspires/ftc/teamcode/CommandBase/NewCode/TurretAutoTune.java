@@ -8,6 +8,7 @@ import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.Sho
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.ServoSelect;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.TurretDebugMode;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.TurretAutoTuner;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.TurretPlantModel;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.TurretTune;
 import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
 
@@ -119,6 +120,11 @@ public class TurretAutoTune extends OpModeEX {
                     tuner.isGainLimitFound() ? "" : " (no oscillation found)");
             telemetry.addData("candidates tried / failed", tuner.getCandidatesTried() + " / " + tuner.getCandidatesFailed());
         }
+        if (tuner.getPlantParams() != null) {
+            TurretPlantModel.Params pp = tuner.getPlantParams();
+            telemetry.addData("measured delay / accel / decel", "%.3f s / %.0f / %.0f deg/s^2", pp.delay, pp.accel, pp.decel);
+            telemetry.addData("start power / encoder noise / loop", "%.3f / %.3f deg / %.1f ms", pp.startPower, pp.encoderNoise, pp.loopDt * 1000);
+        }
         if (tuner.getBestSoFar() != null) {
             telemetry.addData("best settle / overshoot", "%.2f s / %.2f deg", tuner.getBestSettle(), tuner.getBestOvershoot());
             telemetry.addData("best tracking error (RMS)", "%.2f deg", tuner.getBestTracking());
@@ -135,7 +141,8 @@ public class TurretAutoTune extends OpModeEX {
             telemetry.addData("maxVelocity", "%.0f", r.maxVelocity);
             telemetry.addData("maxAcceleration", "%.0f", r.maxAcceleration);
             telemetry.addData("latency", "%.3f", r.latency);
-            telemetry.addData("brake-aware control", "%s (delay scale %.2f)", r.brakeAware, r.brakeDelayScale);
+            telemetry.addData("predictive speed control", "%s (kPos %.1f, delay %.3f s, delay scale %.2f)", r.brakeAware, r.kPos, r.plantDelay, r.brakeDelayScale);
+            telemetry.addData("checked on the turret", tuner.isVerified() ? "yes" : "NO - see warning");
             telemetry.addData("speed/power table points", r.ffSpeed == null ? 0 : r.ffSpeed.length);
             telemetry.addLine(saveStatus);
         }

@@ -127,6 +127,7 @@ public class Test_tele extends OpModeEX {
         );
         turret.setConstraints(TurretTuning.maxVelocity, TurretTuning.maxAcceleration);
         turret.setLatencyCompensation(TurretTuning.latency);
+        turret.setPlant(TurretTuning.plantDelay, TurretTuning.plantAccel, TurretTuning.plantDecel, TurretTuning.kPos, TurretTuning.decelSafety);
         turret.setBrakeAware(TurretTuning.brakeAware, TurretTuning.brakeDelayScale);
 
         turretDebugControls();

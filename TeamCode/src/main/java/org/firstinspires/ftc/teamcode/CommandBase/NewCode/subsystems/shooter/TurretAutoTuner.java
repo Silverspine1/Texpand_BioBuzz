@@ -31,12 +31,12 @@ public class TurretAutoTuner {
         void moveTo(double angle, TurretTune gains);
     }
 
-    public enum Stage { DEADBAND, SWEEP, GAIN_LIMIT, SEARCH, VERIFY, DONE, ABORTED }
+    public enum Stage { DEADBAND, SWEEP, MODEL, GAIN_LIMIT, SEARCH, VERIFY, DONE, ABORTED }
 
     private enum State {
         KS_WAIT_STILL, KS_RAMP,
         GOTO, SWEEP_REST, SWEEP_RUN,
-        TRIAL_MOVE, TRIAL_TRACK, BRAKE,
+        MODEL_SEARCH, TRIAL_MOVE, TRIAL_TRACK, BRAKE,
         FINISH_MOVE, DONE, ABORTED
     }
 
@@ -58,7 +58,7 @@ public class TurretAutoTuner {
     private static final double ASYMMETRY_LIMIT = 0.35;
     private static final double RUN_TIMEOUT = 6.0;
     private static final double GOTO_TOLERANCE = 5.0;
-    private static final double SETTLE_TOLERANCE = 1.0;
+    private static final double SETTLE_TOLERANCE = TurretModelSearch.SETTLE_TOLERANCE;
     private static final double SETTLE_VELOCITY = 15;
     private static final double SETTLE_HOLD = 0.15;
     private static final double TRACK_SECONDS = 2.0;
@@ -71,11 +71,38 @@ public class TurretAutoTuner {
     private static final int OSCILLATION_REVERSALS = 3;
     private static final double OSCILLATION_ERROR = 1.5;
     private static final int VERIFY_ATTEMPTS = 4;
-    private static final int SEARCH_ROUNDS = 5;
+    // round 1 = the model's finalists, rounds 2 and 3 = progressively gentler fallbacks if none of them is stable on the turret
+    private static final int SEARCH_ROUNDS = 3;
+    private static final long MODEL_SLICE_NANOS = 6_000_000L;
+    private static final double SOFT_SETTLE_ERROR = 2.5;
     private static final double VERIFY_BACKOFF = 0.7;
     private static final double[][] SEARCH_KP_OF_KU = {{0.2, 0.3, 0.45}, {0.8, 1.2}};
 
     private final Io io;
+
+    // ---- measured about this turret and its loop, for the plant model
+    private double lastStepTime = -1;
+    private double loopDtAvg = 0.017;
+    private int loopDtCount = 0;
+    private double prevAngle = Double.NaN;
+    private double noiseSumSq = 0;
+    private int noiseN = 0;
+    private final List<double[]> decelSamples = new ArrayList<>();
+
+    private static class RunTrace {
+        final double speed;
+        final double[][] samples;   // {seconds since command, degrees travelled}
+        RunTrace(double speed, double[][] samples) {
+            this.speed = speed;
+            this.samples = samples;
+        }
+    }
+
+    private final List<RunTrace> runTraces = new ArrayList<>();
+    private TurretModelSearch modelSearch;
+    private TurretPlantModel.Params plantParams;
+    private boolean verified = false;
+    private double modelBestScore = Double.NaN;
 
     private State state = State.KS_WAIT_STILL;
     private State afterGoto;
@@ -174,6 +201,19 @@ public class TurretAutoTuner {
         angle = io.angle();
         velocity = io.velocity();
 
+        double stepDt = lastStepTime < 0 ? 0 : now - lastStepTime;
+        lastStepTime = now;
+        if (stepDt > 0 && stepDt < 0.2) {
+            loopDtAvg = loopDtCount == 0 ? stepDt : loopDtAvg + 0.02 * (stepDt - loopDtAvg);
+            loopDtCount++;
+        }
+        if ((state == State.KS_WAIT_STILL || state == State.SWEEP_REST) && Math.abs(velocity) < 3
+                && !Double.isNaN(prevAngle) && Double.isFinite(angle)) {
+            noiseSumSq += (angle - prevAngle) * (angle - prevAngle);
+            noiseN++;
+        }
+        prevAngle = angle;
+
         if (state == State.DONE) {
             return;
         }
@@ -197,6 +237,7 @@ public class TurretAutoTuner {
             case GOTO: gotoStep(); break;
             case SWEEP_REST: sweepRest(); break;
             case SWEEP_RUN: sweepRun(); break;
+            case MODEL_SEARCH: modelStep(); break;
             case TRIAL_MOVE: trialMove(); break;
             case TRIAL_TRACK: trialTrack(); break;
             case BRAKE: brake(); break;
@@ -328,6 +369,7 @@ public class TurretAutoTuner {
             double coast = Math.abs(angle - cutAngle);
             double measured = 1.5 * coast / Math.abs(cutVelocity);
             coastFactor = Math.max(0.03, Math.max(0.5 * coastFactor, measured));
+            if (Math.abs(cutVelocity) > 100) decelSamples.add(new double[]{Math.abs(cutVelocity), coast});
         }
         haveCut = false;
 
@@ -418,6 +460,16 @@ public class TurretAutoTuner {
             return false;
         }
         sweepPoints.add(new double[]{plan.power, speed, plan.dir});
+
+        // Keep the start of the run (distance travelled vs time since the command) to fit delay and acceleration later.
+        if (speed > 60) {
+            double[][] trace = new double[n][2];
+            for (int i = 0; i < n; i++) {
+                trace[i][0] = runSamples.get(i)[0] - runStartTime;
+                trace[i][1] = (runSamples.get(i)[1] - runStartAngle) * plan.dir;
+            }
+            runTraces.add(new RunTrace(speed, trace));
+        }
 
         if (plan.power >= kSRamp + 0.35 * (maxPower - kSRamp)) {
             double moveTime = -1;
@@ -519,8 +571,102 @@ public class TurretAutoTuner {
         baseTune.kP = GAIN_START * modelKP;
 
         searchAngle = Math.min(searchAngle, 0.65 * safeRange);
-        phase = Phase.GAIN_LIMIT;
-        startTrial(baseTune.copy(), new double[]{-searchAngle + GAIN_STEP, -searchAngle}, false);
+
+        plantParams = buildPlantParams(table, kS);
+        baseTune.plantDelay = plantParams.delay;
+        baseTune.plantAccel = plantParams.accel;
+        baseTune.plantDecel = plantParams.decel;
+        modelSearch = new TurretModelSearch(plantParams, baseTune, modelKP, searchAngle, topSpeed, safeRange);
+        io.setPower(0);
+        enter(State.MODEL_SEARCH);
+    }
+
+    /** Plant model from what the sweep measured: speed table, start threshold, delay, slew limits, noise, loop time. */
+    private TurretPlantModel.Params buildPlantParams(double[][] table, double kS) {
+        TurretPlantModel.Params pp = new TurretPlantModel.Params();
+        if (table != null) {
+            pp.tableSpeed = table[0];
+            pp.tablePower = table[1];
+        } else {
+            pp.tableSpeed = new double[]{0, topSpeed};
+            pp.tablePower = new double[]{kS, Math.max(kS + 0.01, satPower)};
+        }
+        pp.startPower = Math.max(kS, kSRamp);
+
+        double[] fit = fitDelayAndAccel();
+        pp.delay = fit[0];
+        double a = fit[1];
+        pp.accel = a;
+
+        List<Double> decels = new ArrayList<>();
+        for (double[] s : decelSamples) {
+            double stopDistance = s[1] - s[0] * pp.delay;
+            double floor = s[0] * s[0] / (2 * 50000.0);
+            decels.add(s[0] * s[0] / (2 * Math.max(floor, stopDistance)));
+        }
+        pp.decel = decels.isEmpty() ? a : clamp(median(decels), 0.5 * a, 20 * a);
+
+        pp.loopDt = clamp(loopDtAvg, 0.004, 0.06);
+        pp.loopJitter = 0.35 * pp.loopDt;
+        pp.encoderNoise = noiseN > 20 ? clamp(Math.sqrt(noiseSumSq / noiseN / 2.0), 0.02, 0.5) : 0.08;
+        return pp;
+    }
+
+    /**
+     * Start of every recorded sweep run against 'nothing for the delay, then speed ramps at a to the run's speed'.
+     * Grid search for the delay (s) and acceleration (deg/s^2) with the least squared position error.
+     */
+    private double[] fitDelayAndAccel() {
+        double bestErr = Double.POSITIVE_INFINITY, bestDelay = 0.03, bestAccel = 2000;
+        for (double delay = 0.0; delay <= 0.15; delay += 0.0025) {
+            for (double a = 200; a <= 40000; a *= 1.12) {
+                double err = 0;
+                int count = 0;
+                for (RunTrace run : runTraces) {
+                    double ramp = run.speed / a;
+                    for (double[] s : run.samples) {
+                        if (s[1] > 25) break;   // only the start: after that it is cruising
+                        double t = s[0] - delay;
+                        double predicted;
+                        if (t <= 0) predicted = 0;
+                        else if (t < ramp) predicted = 0.5 * a * t * t;
+                        else predicted = 0.5 * run.speed * ramp + run.speed * (t - ramp);
+                        double d = predicted - s[1];
+                        err += d * d;
+                        count++;
+                    }
+                }
+                if (count > 0 && err / count < bestErr) {
+                    bestErr = err / count;
+                    bestDelay = delay;
+                    bestAccel = a;
+                }
+            }
+        }
+        if (runTraces.isEmpty()) {
+            double v = Math.max(50, topSpeed);
+            bestDelay = clamp(0.5 * moveDelay, 0.005, 0.2);
+            bestAccel = clamp(0.63 * v / Math.max(0.02, responseTime - bestDelay), 200, 40000);
+        }
+        return new double[]{bestDelay, bestAccel};
+    }
+
+    private void modelStep() {
+        io.setPower(0);
+        boolean finished = modelSearch.run(MODEL_SLICE_NANOS);
+        message = String.format("optimising gains on the measured model: generation %d/%d, %d tried",
+                Math.min(modelSearch.getGeneration() + 1, modelSearch.getGenerations()),
+                modelSearch.getGenerations(), modelSearch.getEvaluations());
+        if (!finished) return;
+
+        TurretModelSearch.Scored top = modelSearch.getBest();
+        modelBestScore = top == null ? Double.NaN : top.score;
+        candidates.clear();
+        candidates.addAll(modelSearch.finalists());
+        phase = Phase.SEARCH;
+        searchRound = 0;
+        candidateIndex = 0;
+        startCandidate();
     }
 
     /** Average speed at each sweep power (both directions), as {speeds, powers} starting at (0, kS). */
@@ -643,22 +789,31 @@ public class TurretAutoTuner {
         double direction = Math.signum(moveTarget - moveStartAngle);
         moveOvershoot = Math.max(moveOvershoot, (angle - moveTarget) * direction);
 
+        // Settled = on target for SETTLE_HOLD. Position only: the encoder's velocity is noisy at rest and the final
+        // approach makes small corrective moves, neither of which is a reason to call a turret that is on target unsettled.
         boolean settled = false;
-        if (Math.abs(moveTarget - angle) < SETTLE_TOLERANCE && Math.abs(velocity) < SETTLE_VELOCITY) {
+        if (Math.abs(moveTarget - angle) < SETTLE_TOLERANCE) {
             if (settleSince < 0) settleSince = now;
             settled = now - settleSince >= SETTLE_HOLD;
         } else {
             settleSince = -1;
         }
 
-        if (!settled) {
-            if (now - moveStartTime > moveTimeout) {
-                failTrial("didn't settle");
+        double settleTime;
+        if (settled) {
+            settleTime = settleSince - moveStartTime;
+        } else if (now - moveStartTime > moveTimeout) {
+            double miss = Math.abs(moveTarget - angle);
+            if (miss > SOFT_SETTLE_ERROR) {
+                failTrial(String.format("didn't settle (%.1f deg off)", miss));
+                return;
             }
+            // close but never held inside tolerance: usable, scored as slow
+            settleTime = (now - moveStartTime) + 0.3 + 0.2 * miss;
+        } else {
             return;
         }
 
-        double settleTime = settleSince - moveStartTime;
         trialScoreSum += settleTime + 0.1 * moveOvershoot;
         trialSettleSum += settleTime;
         trialOvershootSum += moveOvershoot;
@@ -730,11 +885,10 @@ public class TurretAutoTuner {
 
     private String trialMessage(String detail) {
         switch (phase) {
-            case GAIN_LIMIT:
-                return String.format("gain limit: kP %.5f, %s", trialGains.kP, detail);
             case SEARCH:
-                return String.format("search round %d, candidate %d/%d: %s",
-                        searchRound + 1, candidateIndex + 1, candidates.size(), detail);
+                return String.format("%s %d/%d on the turret: %s",
+                        searchRound == 0 ? "checking model candidate" : "fallback candidate",
+                        candidateIndex + 1, candidates.size(), detail);
             default:
                 return String.format("verify attempt %d/%d: %s", verifyAttempt + 1, VERIFY_ATTEMPTS, detail);
         }
@@ -742,104 +896,25 @@ public class TurretAutoTuner {
 
     private void onTrialDone(boolean passed, double trackingRms) {
         switch (phase) {
-            case GAIN_LIMIT: gainLimitTrialDone(passed); break;
             case SEARCH: searchTrialDone(passed, trackingRms); break;
             case VERIFY: verifyTrialDone(passed); break;
         }
     }
 
-    // ---------------------------------------------------------------- gain limit
+    // ---------------------------------------------------------------- candidates on the turret
 
-    private void gainLimitTrialDone(boolean passed) {
-        boolean oscillated = !passed && !"didn't settle".equals(trialFailure);
-        double kP = trialGains.kP;
-
-        if (oscillated) {
-            gainLimitKP = kP;
-            gainLimitFound = true;
-            startSearch();
-            return;
-        }
-
-        double next = kP * GAIN_GROWTH;
-        if (next > GAIN_MAX * modelKP) {
-            gainLimitKP = kP * GAIN_GROWTH;
-            gainLimitFound = false;
-            startSearch();
-            return;
-        }
-
-        TurretTune t = baseTune.copy();
-        t.kP = next;
-        startTrial(t, new double[]{-searchAngle + GAIN_STEP, -searchAngle}, false);
-    }
-
-    // ---------------------------------------------------------------- search
-
-    private void startSearch() {
-        phase = Phase.SEARCH;
-        searchRound = 0;
-        buildSearchRound();
-        startCandidate();
-    }
-
-    private void buildSearchRound() {
+    /** Round 0 is built by the model search; later rounds are fallbacks that only run if nothing was stable. */
+    private void buildFallbackRound() {
         candidates.clear();
         candidateIndex = 0;
-
-        if (searchRound == 0) {
-            for (double vf : new double[]{0, 0.25}) {
-                for (double m : SEARCH_KP_OF_KU[0]) {
-                    TurretTune t = baseTune.copy();
-                    t.kP = gainLimitKP * m;
-                    t.kVelocityFeedback = baseTune.kV * vf;
-                    candidates.add(t);
-                }
-            }
-        } else if (searchRound == 1) {
-            for (double m : new double[]{0.5, 1.5}) {
-                TurretTune t = best.copy();
-                t.latency = clamp(best.latency * m, 0, 0.3);
-                candidates.add(t);
-            }
-        } else if (searchRound == 2) {
-            for (double m : new double[]{0.6, 1.6}) {
-                TurretTune t = best.copy();
-                t.maxAcceleration = clamp(best.maxAcceleration * m, 300, 30000);
-                candidates.add(t);
-            }
-            TurretTune noKA = best.copy();
-            noKA.kA = 0;
-            candidates.add(noKA);
-        } else if (searchRound == 4) {
-            // Speed-demand control that uses the servo's neutral brake; compared against the profiled winner.
-            for (double m : new double[]{1.0, 1.5, 2.2}) {
-                TurretTune t = best.copy();
-                t.brakeAware = true;
-                t.brakeDelayScale = m;
-                t.maxVelocity = 0.97 * topSpeed;
-                candidates.add(t);
-            }
-            for (double m : new double[]{0.6, 1.6}) {
-                TurretTune t = best.copy();
-                t.brakeAware = true;
-                t.brakeDelayScale = 1.5;
-                t.maxVelocity = 0.97 * topSpeed;
-                t.maxAcceleration = clamp(best.maxAcceleration * m, 300, 30000);
-                candidates.add(t);
-            }
-        } else {
-            for (double m : SEARCH_KP_OF_KU[1]) {
-                TurretTune t = best.copy();
-                t.kP = Math.min(best.kP * m, 0.5 * gainLimitKP);
-                if (t.kP != best.kP) candidates.add(t);
-            }
-            for (double m : new double[]{0.8, 1.2}) {
-                TurretTune t = best.copy();
-                t.kS = best.kS * m;
-                candidates.add(t);
-            }
-        }
+        double factor = searchRound == 1 ? 0.5 : 0.25;
+        TurretTune t = baseTune.copy();
+        t.kP = modelKP * factor;
+        t.kVelocityFeedback = 0.25 * baseTune.kV;
+        t.brakeAware = false;
+        t.maxAcceleration = Math.max(300, baseTune.maxAcceleration * factor);
+        t.maxVelocity = baseTune.maxVelocity * (searchRound == 1 ? 0.8 : 0.6);
+        candidates.add(t);
     }
 
     private void startCandidate() {
@@ -869,23 +944,20 @@ public class TurretAutoTuner {
         }
 
         if (best == null) {
-            abort("no candidate was stable - turret may be binding or the encoder is noisy");
-            return;
-        }
-
-        searchRound++;
-        if (searchRound < SEARCH_ROUNDS) {
-            buildSearchRound();
-            if (!candidates.isEmpty()) {
-                startCandidate();
-                return;
-            }
             searchRound++;
             if (searchRound < SEARCH_ROUNDS) {
-                buildSearchRound();
+                warning = "model's settings were not stable on the turret, trying gentler gains";
+                buildFallbackRound();
                 startCandidate();
                 return;
             }
+            // Nothing passed even gently: keep the gentlest settings rather than throw the sweep away.
+            result = candidates.get(candidates.size() - 1).copy();
+            verified = false;
+            warning = "UNVERIFIED: no setting passed the on-turret check (" + trialFailure + "). Gentle gains saved.";
+            io.moveTo(0, result);
+            enter(State.FINISH_MOVE);
+            return;
         }
 
         phase = Phase.VERIFY;
@@ -902,6 +974,7 @@ public class TurretAutoTuner {
     private void verifyTrialDone(boolean passed) {
         if (passed) {
             result = trialGains.copy();
+            verified = true;
             io.moveTo(0, result);
             enter(State.FINISH_MOVE);
             return;
@@ -909,12 +982,18 @@ public class TurretAutoTuner {
 
         verifyAttempt++;
         if (verifyAttempt >= VERIFY_ATTEMPTS) {
-            abort("couldn't find gains that stay stable (" + trialFailure + ")");
+            // It passed the search trial, so keep it (already backed off) and say it did not pass the longer check.
+            result = best.copy();
+            verified = false;
+            warning = "UNVERIFIED: passed the first check but not the long one (" + trialFailure + "). Saved with reduced gains.";
+            io.moveTo(0, result);
+            enter(State.FINISH_MOVE);
             return;
         }
         best.kP *= VERIFY_BACKOFF;
         best.kVelocityFeedback *= VERIFY_BACKOFF;
-        warning = String.format("final check failed (%s), backing off kP", trialFailure);
+        best.maxAcceleration = Math.max(300, best.maxAcceleration * VERIFY_BACKOFF);
+        warning = String.format("final check failed (%s), backing off gains", trialFailure);
         startVerify();
     }
 
@@ -947,6 +1026,8 @@ public class TurretAutoTuner {
                 return Stage.ABORTED;
             case FINISH_MOVE:
                 return Stage.VERIFY;
+            case MODEL_SEARCH:
+                return Stage.MODEL;
             default:
                 if (baseTune == null) return Stage.SWEEP;
                 if (phase == Phase.GAIN_LIMIT) return Stage.GAIN_LIMIT;
@@ -970,6 +1051,9 @@ public class TurretAutoTuner {
     public double getMoveDelay() { return moveDelay; }
     public double getGainLimitKP() { return gainLimitKP; }
     public boolean isGainLimitFound() { return gainLimitFound; }
+    public boolean isVerified() { return verified; }
+    public double getModelBestScore() { return modelBestScore; }
+    public TurretPlantModel.Params getPlantParams() { return plantParams; }
     public double getBestSettle() { return bestSettle; }
     public double getBestOvershoot() { return bestOvershoot; }
     public double getBestTracking() { return bestTracking; }

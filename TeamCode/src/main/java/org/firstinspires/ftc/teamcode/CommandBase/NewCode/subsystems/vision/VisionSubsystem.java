@@ -196,6 +196,11 @@ public class VisionSubsystem extends SubSystem {
     public static int CONFIRM_HITS = 2;
     public static double ASSOCIATION_GATE_CM = 5;
     public static double REPLAN_S = 0.25;
+    /**
+     * false (default): once a path is started it is driven to its end, then the next one is planned. Swapping to a
+     * fresh plan mid-path every REPLAN_S made the drive twitchy and sporadic. true = the old behaviour.
+     */
+    public static boolean REPLAN_WHILE_DRIVING = false;
     public static int PLAN_CANDIDATES = 8;
     public static boolean USE_TUNED_FILE = true;
     public static boolean SEND_DASHBOARD = true;
@@ -510,9 +515,11 @@ public class VisionSubsystem extends SubSystem {
             if (startLatched && nearestStartBall(t.x, t.y, START_BALL_RADIUS_CM) < 0) continue;
             tracks.add(t);
         }
-        if (!tracks.isEmpty() && now - lastPlanS >= params.replanS) {
+        boolean mayPlan = plan == null || REPLAN_WHILE_DRIVING;
+        if (mayPlan && !tracks.isEmpty() && now - lastPlanS >= params.replanS) {
             lastPlanS = now;
             List<CollectPlanner.Plan> cands = planner.planCandidates(pose, tracks, room, params.nCandidates);
+            // a committed plan is never compared or swapped (see REPLAN_WHILE_DRIVING)
             CollectPlanner.Plan best = cands.isEmpty() ? null : planner.chooseBest(cands, pose, speed, tracks, room);
             if (best != null && best.nExpected > 0) {
                 boolean keep = false;

@@ -7,10 +7,20 @@ public class SetTurretAngle {
     private static final double PROFILE_EPSILON = 0.000001;
     private static final double MAX_DT = 0.05;
 
-    private final Servo tServ;
-    private final Servo tServ1;
+    /** Where the controller reads the turret from (the real encoder, or the tuner's plant model). */
+    public interface Sensor {
+        double getTurretAngle();
 
-    private final AxonEncoder encoder;
+        double getVelocity();
+    }
+
+    /** Where the servo command goes (both servos on the robot). */
+    public interface Sink {
+        void set(double position);
+    }
+
+    private final Sensor encoder;
+    private final Sink output_;
 
     private double minPosition = -140;
     private double maxPosition = 140;
@@ -86,9 +96,22 @@ public class SetTurretAngle {
     private long pulseRestEndNanos = 0;
     private double pulseSign = 0;
 
-    private boolean brakeAware = false;
-    private double brakeDelayScale = 1.5;
-    private static final double BRAKE_BASE_DELAY = 0.012;
+    private boolean brakeAware = false;   // "predictive" mode; the name is kept so saved tunes still load
+    private double plantDelay = 0.04;
+    private double plantAccel = 1500;
+    private double plantDecel = 1500;
+    private double kPos = 15;
+    private double decelSafety = 0.8;
+    private static final int ISSUED_HISTORY = 96;
+    private static final double OBSERVER_CORRECTION = 0.02;
+    private final double[] issuedTime = new double[ISSUED_HISTORY];
+    private final double[] issuedSpeed = new double[ISSUED_HISTORY];
+    private int issuedHead = 0;
+    private int issuedCount = 0;
+    private double observerVelocity = 0;
+    private double predictedPosition, predictedVelocity, speedDemand;
+    private long observerLastNanos = 0;
+    private double brakeDelayScale = 1.0;
     private static final double BRAKE_HOLD_DEG = 0.15;
     private static final double DITHER_PERIOD = 0.04;
 
@@ -106,6 +129,13 @@ public class SetTurretAngle {
     private static final double MAX_LEAD = 3.0;
     private static final double TRACKING_TIMEOUT = 0.25;
     private double targetRate = 0;
+    private double targetAccel = 0;
+    private double targetFiltered = 0;
+    // critically damped g-h-k gains for theta = 0.72
+    private static final double TRACK_ALPHA = 1 - 0.72 * 0.72 * 0.72;
+    private static final double TRACK_BETA = 1.5 * (1 - 0.72) * (1 - 0.72) * (1 + 0.72);
+    private static final double TRACK_GAMMA = 0.5 * (1 - 0.72) * (1 - 0.72) * (1 - 0.72);
+    private static final double MAX_TARGET_ACCEL = 3000;
     private long lastRequestNanos = 0;
 
     // Behind the turret's travel limits the target sits at one limit; near the +/-180 seam it keeps the side it was on.
@@ -119,9 +149,14 @@ public class SetTurretAngle {
             double maxVelocity,
             double maxAcceleration
     ) {
-        this.tServ = servo;
-        this.tServ1 = turretServo2;
         this.encoder = encoder;
+        this.output_ = new Sink() {
+            @Override
+            public void set(double position) {
+                servo.setPosition(position);
+                turretServo2.setPosition(position);
+            }
+        };
 
         setConstraints(maxVelocity, maxAcceleration);
 
@@ -130,6 +165,14 @@ public class SetTurretAngle {
             saved.applyTo(this);
             usingSavedTune = true;
         }
+    }
+
+
+    /** Controller on a model (no saved tune is loaded): used by the tuner to score gains without moving the turret. */
+    public SetTurretAngle(Sensor sensor, Sink sink, double maxVelocity, double maxAcceleration) {
+        this.encoder = sensor;
+        this.output_ = sink;
+        setConstraints(maxVelocity, maxAcceleration);
     }
 
 
@@ -151,9 +194,17 @@ public class SetTurretAngle {
         double change = normalizeAngle(angle - requestedAngle);
         if (active && lastRequestNanos != 0 && sinceLast > 0
                 && sinceLast < TRACKING_TIMEOUT && Math.abs(change) < TRACKING_JUMP) {
-            targetRate += 0.3 * (change / sinceLast - targetRate);
+            // g-h-k filter on the requested angle: follows a smooth ride without the lag a plain low-pass puts in the rate.
+            double predicted = targetFiltered + targetRate * sinceLast + 0.5 * targetAccel * sinceLast * sinceLast;
+            double residual = normalizeAngle(angle - predicted);
+            targetFiltered = predicted + TRACK_ALPHA * residual;
+            targetRate += targetAccel * sinceLast + TRACK_BETA / sinceLast * residual;
+            targetAccel += 2.0 * TRACK_GAMMA / (sinceLast * sinceLast) * residual;
+            targetAccel = clamp(targetAccel, -MAX_TARGET_ACCEL, MAX_TARGET_ACCEL);
         } else if (lastRequestNanos == 0 || sinceLast > 0) {
             targetRate = 0;
+            targetAccel = 0;
+            targetFiltered = angle;
         }
         lastRequestNanos = now;
 
@@ -196,8 +247,7 @@ public class SetTurretAngle {
 
         if (Double.isNaN(rawPosition) || Double.isInfinite(rawPosition)
                 || Double.isNaN(rawVelocity) || Double.isInfinite(rawVelocity)) {
-            tServ.setPosition(neutralPosition);
-            tServ1.setPosition(neutralPosition);
+            output_.set(neutralPosition);
             return;
         }
 
@@ -206,6 +256,7 @@ public class SetTurretAngle {
 
         if (targetRate != 0 && (now - lastRequestNanos) / 1e9 > TRACKING_TIMEOUT) {
             targetRate = 0;
+            targetAccel = 0;
             targetNeedsResolution = true;
         }
 
@@ -358,6 +409,10 @@ public class SetTurretAngle {
         profilePosition = Position;
         profileVelocity = Velocity;
         profileAcceleration = 0;
+
+        observerVelocity = Velocity;
+        observerLastNanos = 0;
+        issuedCount = 0;
 
         profileFinished = false;
 
@@ -550,57 +605,134 @@ public class SetTurretAngle {
     }
 
 
+    /** Slowest steady speed the servos can hold: what 1.3 x kS (just over breakaway) gives. */
     private double creepSpeed() {
+        double power = 1.3 * kS;
         if (ffSpeed != null && ffSpeed.length > 1) {
-            return Math.max(2.0, ffSpeed[1]);
+            int last = ffPower.length - 1;
+            if (power >= ffPower[last]) return ffSpeed[last];
+            int i = 1;
+            while (i < last && power > ffPower[i]) i++;
+            double span = ffPower[i] - ffPower[i - 1];
+            double f = span > 1e-9 ? Math.max(0, (power - ffPower[i - 1]) / span) : 1;
+            return Math.max(3.0, ffSpeed[i - 1] + f * (ffSpeed[i] - ffSpeed[i - 1]));
         }
-        return Math.max(5.0, 0.02 / Math.max(1e-6, kV));
+        return Math.max(5.0, (power - kS) / Math.max(1e-6, kV));
     }
 
 
-    private void computeBrakeAwareOutput(long now) {
-        double error = targetPosition - Position;
-        double absError = Math.abs(error);
+    /**
+     * Speed-demand control for a servo pair that is a speed source with a delay and a slew limit.
+     * An observer runs the same delay + slew model on the speeds already commanded, so the state the new command will
+     * meet (position and speed one delay from now) is known; the speed demand is the fastest that still stops on the
+     * target from there, plus the target's own speed. Demands below the creep speed are pulse-width modulated.
+     */
+    private void computePredictiveOutput(long now) {
+        double nowS = now / 1e9;
+        double dt = observerLastNanos == 0 ? 0 : clamp((now - observerLastNanos) / 1e9, 0, 0.05);
+        observerLastNanos = now;
+        double delay = Math.max(0.005, plantDelay * brakeDelayScale);
 
-        positionError = error;
+        if (dt > 0) {
+            observerVelocity = slew(observerVelocity, issuedSpeedAt(nowS - delay), dt);
+            observerVelocity += OBSERVER_CORRECTION * (Velocity - observerVelocity);
+        }
+
+        double p = Position;
+        double v = observerVelocity;
+        double steps = Math.max(1, Math.ceil(delay / 0.005));
+        double h = delay / steps;
+        for (int i = 0; i < steps; i++) {
+            v = slew(v, issuedSpeedAt(nowS + (i + 0.5) * h - delay), h);
+            p += v * h;
+        }
+
+        double age = lastRequestNanos == 0 ? 0 : clamp((now - lastRequestNanos) / 1e9, 0, 0.1);
+        double ahead = age + delay;
+        double leadAccel = Math.abs(targetRate) > 1.0 ? targetAccel : 0;
+        double error = targetPosition + targetRate * ahead + 0.5 * leadAccel * ahead * ahead - p;
+        double absError = Math.abs(error);
+        predictedPosition = p;
+        predictedVelocity = v;
+
+        positionError = targetPosition - Position;
         velocityError = 0;
         feedback = 0;
 
+        double speed;
         if (absError < BRAKE_HOLD_DEG && Math.abs(targetRate) < 1.0) {
-            feedforward = 0;
-            output = 0;
-            return;
+            speed = 0;
+        } else {
+            // Error left after the turret has matched the target's speed at the braking rate it is allowed: while the
+            // target is still ahead of that point the demand is large, and it falls to zero exactly as braking must start.
+            double rateNow = targetRate + leadAccel * ahead;
+        double relativeSpeed = v - rateNow;
+            double brakeRate = plantDecel * decelSafety;
+            double remaining = error - relativeSpeed * Math.abs(relativeSpeed) / (2.0 * brakeRate);
+            speed = clamp(rateNow + clamp(kPos * remaining, -maxVelocity, maxVelocity), -maxVelocity, maxVelocity);
         }
-
-        double delay = brakeDelayScale * (0.5 * latencyCompensation + BRAKE_BASE_DELAY);
-        double aD = maxAcceleration * delay;
-        double speed = Math.min(maxVelocity,
-                Math.sqrt(aD * aD + 2.0 * maxAcceleration * absError) - aD);
-        speed = clamp(Math.copySign(speed, error) + targetRate, -maxVelocity, maxVelocity);
 
         double absSpeed = Math.abs(speed);
         double sign = Math.signum(speed);
         double creep = creepSpeed();
+        double issued;
 
-        if (absSpeed < creep) {
-            double duty = absSpeed / creep;
-            double phase = ((now / 1e9) % DITHER_PERIOD) / DITHER_PERIOD;
-            if (phase >= duty) {
+        if (absSpeed < 1e-9) {
+            issued = 0;
+            feedforward = 0;
+            output = 0;
+        } else {
+            if (absSpeed < creep) {
+                double duty = absSpeed / creep;
+                double phase = (nowS % DITHER_PERIOD) / DITHER_PERIOD;
+                absSpeed = phase < duty ? creep : 0;
+            }
+            if (absSpeed == 0) {
+                issued = 0;
                 feedforward = 0;
                 output = 0;
-                return;
+            } else {
+                double top = ffSpeed != null ? ffSpeed[ffSpeed.length - 1] : Double.MAX_VALUE;
+                absSpeed = Math.min(absSpeed, top);
+                feedforward = sign * clamp(powerForSpeed(absSpeed), 0, maxCorrection);
+                output = feedforward;
+                issued = sign * absSpeed;
             }
-            absSpeed = creep;
         }
+        speedDemand = speed;
+        recordIssuedSpeed(nowS, issued);
+    }
 
-        feedforward = sign * clamp(powerForSpeed(absSpeed), 0, maxCorrection);
-        output = feedforward;
+    private double slew(double current, double target, double dt) {
+        double rate = Math.abs(target) >= Math.abs(current) && target * current >= 0 ? plantAccel : plantDecel;
+        if (Math.abs(target) < 1e-9 || target * current < 0) {
+            rate = plantDecel;
+        }
+        return moveTowards(current, target, rate * dt);
+    }
+
+    private void recordIssuedSpeed(double timeS, double speed) {
+        issuedHead = (issuedHead + 1) % ISSUED_HISTORY;
+        issuedTime[issuedHead] = timeS;
+        issuedSpeed[issuedHead] = speed;
+        issuedCount = Math.min(issuedCount + 1, ISSUED_HISTORY);
+    }
+
+    /** The speed demand that was in force at a time (the latest one issued at or before it). */
+    private double issuedSpeedAt(double timeS) {
+        for (int i = 0; i < issuedCount; i++) {
+            int idx = (issuedHead - i + ISSUED_HISTORY) % ISSUED_HISTORY;
+            if (issuedTime[idx] <= timeS) {
+                return issuedSpeed[idx];
+            }
+        }
+        return 0;
     }
 
 
     private void calculateControl(long now) {
         if (brakeAware) {
-            computeBrakeAwareOutput(now);
+            computePredictiveOutput(now);
         } else {
             computeProfiledOutput(now);
         }
@@ -627,8 +759,7 @@ public class SetTurretAngle {
             lastSafeServoCommand = servoCommand;
         }
 
-        tServ.setPosition(servoCommand);
-        tServ1.setPosition(servoCommand);
+        output_.set(servoCommand);
     }
 
 
@@ -662,13 +793,13 @@ public class SetTurretAngle {
         active = false;
         targetRate = 0;
         lastRequestNanos = 0;
+        targetAccel = 0;
         atTarget = false;
         profileFinished = false;
 
         insideToleranceSinceNanos = 0;
 
-        tServ.setPosition(neutralPosition);
-        tServ1.setPosition(neutralPosition);
+        output_.set(neutralPosition);
     }
 
 
@@ -705,6 +836,16 @@ public class SetTurretAngle {
             needsProfileInitialization = active;
             targetNeedsResolution = true;
         }
+    }
+
+
+    /** Delay (s), speed slew up / back toward neutral (deg/s^2), position gain (1/s) and stopping margin for predictive mode. */
+    public void setPlant(double delay, double accel, double decel, double positionGain, double stopMargin) {
+        plantDelay = Math.max(0.005, delay);
+        plantAccel = Math.max(50, accel);
+        plantDecel = Math.max(50, decel);
+        kPos = Math.max(0.5, positionGain);
+        decelSafety = Math.max(0.2, Math.min(1.0, stopMargin));
     }
 
 
@@ -784,6 +925,16 @@ public class SetTurretAngle {
     public double getPositionError() {
         return positionError;
     }
+
+
+    /** Predictive mode: where the observer expects the turret to be (deg), its speed (deg/s) and the speed demanded (deg/s). */
+    public double getPredictedPosition() { return predictedPosition; }
+
+    public double getPredictedVelocity() { return predictedVelocity; }
+
+    public double getSpeedDemand() { return speedDemand; }
+
+    public double getTargetRate() { return targetRate; }
 
 
     public double getServoCommand() {

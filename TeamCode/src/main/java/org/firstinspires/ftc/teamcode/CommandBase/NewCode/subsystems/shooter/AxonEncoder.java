@@ -5,7 +5,7 @@ import com.qualcomm.robotcore.hardware.AnalogInput;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-public class AxonEncoder {
+public class AxonEncoder implements SetTurretAngle.Sensor {
 
     // Flip this one sign to reverse the turret angle AND velocity together (+ = counter-clockwise from above).
     public static final double TURRET_DIRECTION = -1;
