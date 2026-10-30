@@ -70,7 +70,9 @@ public final class VisionTuneFile {
         int m = f.getModifiers();
         if (!Modifier.isStatic(m) || !Modifier.isPublic(m) || Modifier.isFinal(m)) return false;
         Class<?> t = f.getType();
-        // USE_TUNED_FILE decides whether the file is read at all, so it is never stored in it
-        return (t == double.class || t == int.class || t == boolean.class) && !f.getName().equals("USE_TUNED_FILE");
+        // USE_TUNED_FILE decides whether the file is read at all, so it is never stored in it;
+        // VIEW is a display choice, not a tune
+        return (t == double.class || t == int.class || t == boolean.class)
+                && !f.getName().equals("USE_TUNED_FILE") && !f.getName().equals("VIEW");
     }
 }

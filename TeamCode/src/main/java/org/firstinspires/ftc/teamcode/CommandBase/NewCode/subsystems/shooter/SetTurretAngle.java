@@ -72,6 +72,16 @@ public class SetTurretAngle {
     private double[] ffSpeed;
     private double[] ffPower;
 
+
+    // Brake-aware mode: the CR servo pair is a velocity source whose neutral is a hard brake, so the turret is driven
+    // by a speed demand (stops in the remaining distance given the loop delay) instead of a position profile.
+    // Demands under the creep speed are pulse-width modulated between creep and neutral so every pulse ends in a stop.
+    private boolean brakeAware = false;
+    private double brakeDelayScale = 1.5;
+    private static final double BRAKE_BASE_DELAY = 0.012;
+    private static final double BRAKE_HOLD_DEG = 0.15;
+    private static final double DITHER_PERIOD = 0.04;
+
     private static final int HISTORY_SIZE = 64;
     private final long[] historyTime = new long[HISTORY_SIZE];
     private final double[] historyPosition = new double[HISTORY_SIZE];
@@ -191,7 +201,7 @@ public class SetTurretAngle {
 
         if (targetNeedsResolution) {
             targetPosition = resolveTarget(
-                    requestedAngle + clamp(targetRate * latencyCompensation, -MAX_LEAD, MAX_LEAD),
+                    requestedAngle + (brakeAware ? 0 : clamp(targetRate * latencyCompensation, -MAX_LEAD, MAX_LEAD)),
                     Position,
                     useExtraRange
             );
@@ -347,6 +357,14 @@ public class SetTurretAngle {
 
 
     private void updateProfile(double dt) {
+        if (brakeAware) {
+            profilePosition = targetPosition;
+            profileVelocity = 0;
+            profileAcceleration = 0;
+            profileFinished = true;
+            return;
+        }
+
         double distanceRemaining =
                 targetPosition - profilePosition;
 
@@ -436,7 +454,7 @@ public class SetTurretAngle {
     }
 
 
-    private void calculateControl(long now) {
+    private void computeProfiledOutput(long now) {
         lookUpDelayedProfile(now - (long) (latencyCompensation * 1e9));
 
         positionError =
@@ -482,6 +500,74 @@ public class SetTurretAngle {
                         -maxCorrection,
                         maxCorrection
                 );
+
+    }
+
+
+    /** Speed demand -> power: the measured table when there is one, otherwise kS + kV * speed. */
+    private double powerForSpeed(double speed) {
+        if (ffSpeed != null) {
+            return tablePower(speed);
+        }
+        return kS + kV * speed;
+    }
+
+
+    private double creepSpeed() {
+        if (ffSpeed != null && ffSpeed.length > 1) {
+            return Math.max(2.0, ffSpeed[1]);
+        }
+        return Math.max(5.0, 0.02 / Math.max(1e-6, kV));
+    }
+
+
+    private void computeBrakeAwareOutput(long now) {
+        double error = targetPosition - Position;
+        double absError = Math.abs(error);
+
+        positionError = error;
+        velocityError = 0;
+        feedback = 0;
+
+        if (absError < BRAKE_HOLD_DEG && Math.abs(targetRate) < 1.0) {
+            feedforward = 0;
+            output = 0;
+            return;
+        }
+
+        double delay = brakeDelayScale * (0.5 * latencyCompensation + BRAKE_BASE_DELAY);
+        double aD = maxAcceleration * delay;
+        double speed = Math.min(maxVelocity,
+                Math.sqrt(aD * aD + 2.0 * maxAcceleration * absError) - aD);
+        speed = clamp(Math.copySign(speed, error) + targetRate, -maxVelocity, maxVelocity);
+
+        double absSpeed = Math.abs(speed);
+        double sign = Math.signum(speed);
+        double creep = creepSpeed();
+
+        if (absSpeed < creep) {
+            double duty = absSpeed / creep;
+            double phase = ((now / 1e9) % DITHER_PERIOD) / DITHER_PERIOD;
+            if (phase >= duty) {
+                feedforward = 0;
+                output = 0;
+                return;
+            }
+            absSpeed = creep;
+        }
+
+        feedforward = sign * clamp(powerForSpeed(absSpeed), 0, maxCorrection);
+        output = feedforward;
+    }
+
+
+    private void calculateControl(long now) {
+        if (brakeAware) {
+            computeBrakeAwareOutput(now);
+        } else {
+            computeProfiledOutput(now);
+        }
+
 
         if (Position <= minPosition && output < 0) {
             output = 0;
@@ -573,6 +659,22 @@ public class SetTurretAngle {
         this.kVelocityFeedback = kVelocityFeedback;
         this.maxCorrection = Math.abs(maxCorrection);
     }
+
+
+    public void setBrakeAware(boolean enabled, double delayScale) {
+        brakeDelayScale = Math.max(0.5, Math.min(4.0, delayScale));
+        if (enabled != brakeAware) {
+            brakeAware = enabled;
+            needsProfileInitialization = active;
+            targetNeedsResolution = true;
+        }
+    }
+
+
+    public boolean isBrakeAware() {
+        return brakeAware;
+    }
+
 
 
     public void setLatencyCompensation(double seconds) {

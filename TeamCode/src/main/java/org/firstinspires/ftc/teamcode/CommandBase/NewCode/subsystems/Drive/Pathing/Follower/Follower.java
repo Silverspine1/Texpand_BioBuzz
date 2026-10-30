@@ -53,6 +53,10 @@ public class Follower extends FollowerBaseMethods {
     private static final double HOLD_RELEASE_H = 1.5;        // deg past holdH before a heading hold lets go
     private static final double OVERSHOOT_FADE_H = 15;       // deg
     private static final double KS_RATE = 10;                // deg/s - turn kS fades in over this commanded rate
+    // Turn priority: the drive mixer shares one power budget, so a big drive
+    // command starved the turn and the robot arrived with the heading far off.
+    // Translation is squeezed into what the turn leaves, never below this share.
+    private static final double MIN_TRANSLATION_SHARE = 0.35;
 
     /** Time source (nanoseconds) - swap it to run the follower in a simulation. */
     public interface Clock { long nanos(); }
@@ -325,6 +329,12 @@ public class Follower extends FollowerBaseMethods {
             if (hdg > 360) hdg -= 360;
         }
         double turn = turnPower(hdg, H, hP, hvP);
+        double budget = Math.max(config.powerLimit - Math.abs(turn), MIN_TRANSLATION_SHARE * config.powerLimit);
+        double tsum = Math.abs(pf) + Math.abs(ps);
+        if (tsum > budget && tsum > 1e-9) {
+            pf *= budget / tsum;
+            ps *= budget / tsum;
+        }
         if (!finite(pf) || !finite(ps) || !finite(turn)) {
             pf = 0;
             ps = 0;

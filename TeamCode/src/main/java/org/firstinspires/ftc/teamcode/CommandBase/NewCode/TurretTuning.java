@@ -18,6 +18,10 @@ public class TurretTuning {
     public static double maxAcceleration = 1200.0;
     public static double latency = 0.0;
 
+    /** true = speed-demand control that uses the servo's neutral brake (see SetTurretAngle); false = trapezoid profile. */
+    public static boolean brakeAware = false;
+    public static double brakeDelayScale = 1.5;
+
     public static double testAngle = 45.0;
     public static double pingPongSeconds = 1.5;
     public static double manualMaxPower = 0.3;
@@ -39,6 +43,8 @@ public class TurretTuning {
         maxVelocity = t.maxVelocity;
         maxAcceleration = t.maxAcceleration;
         latency = t.latency;
+        brakeAware = t.brakeAware;
+        brakeDelayScale = t.brakeDelayScale;
         ffSpeed = t.ffSpeed == null ? null : t.ffSpeed.clone();
         ffPower = t.ffPower == null ? null : t.ffPower.clone();
     }
@@ -54,6 +60,8 @@ public class TurretTuning {
         t.maxVelocity = maxVelocity;
         t.maxAcceleration = maxAcceleration;
         t.latency = latency;
+        t.brakeAware = brakeAware;
+        t.brakeDelayScale = brakeDelayScale;
         t.ffSpeed = ffSpeed == null ? null : ffSpeed.clone();
         t.ffPower = ffPower == null ? null : ffPower.clone();
         return t;

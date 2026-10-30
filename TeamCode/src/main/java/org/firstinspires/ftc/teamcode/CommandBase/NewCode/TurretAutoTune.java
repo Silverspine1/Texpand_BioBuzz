@@ -135,6 +135,7 @@ public class TurretAutoTune extends OpModeEX {
             telemetry.addData("maxVelocity", "%.0f", r.maxVelocity);
             telemetry.addData("maxAcceleration", "%.0f", r.maxAcceleration);
             telemetry.addData("latency", "%.3f", r.latency);
+            telemetry.addData("brake-aware control", "%s (delay scale %.2f)", r.brakeAware, r.brakeDelayScale);
             telemetry.addData("speed/power table points", r.ffSpeed == null ? 0 : r.ffSpeed.length);
             telemetry.addLine(saveStatus);
         }

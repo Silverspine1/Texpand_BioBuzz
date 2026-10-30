@@ -28,6 +28,10 @@ public class TurretTune {
     public double maxAcceleration;
     public double latency;
 
+    /** Speed-demand control for the continuous-rotation servos (see SetTurretAngle). Off = trapezoid profile. */
+    public boolean brakeAware;
+    public double brakeDelayScale = 1.5;
+
     /** Measured speed (deg/s) -> servo power curve. Null means use kS + kV * speed. */
     public double[] ffSpeed;
     public double[] ffPower;
@@ -43,6 +47,8 @@ public class TurretTune {
         t.maxVelocity = maxVelocity;
         t.maxAcceleration = maxAcceleration;
         t.latency = latency;
+        t.brakeAware = brakeAware;
+        t.brakeDelayScale = brakeDelayScale;
         t.ffSpeed = ffSpeed == null ? null : ffSpeed.clone();
         t.ffPower = ffPower == null ? null : ffPower.clone();
         return t;
@@ -53,10 +59,12 @@ public class TurretTune {
         turret.setConstraints(maxVelocity, maxAcceleration);
         turret.setLatencyCompensation(latency);
         turret.setFeedforwardTable(ffSpeed, ffPower);
+        turret.setBrakeAware(brakeAware, brakeDelayScale);
     }
 
     public boolean isValid() {
-        double[] values = {kS, kV, kA, kP, kVelocityFeedback, maxCorrection, maxVelocity, maxAcceleration, latency};
+        double[] values = {kS, kV, kA, kP, kVelocityFeedback, maxCorrection, maxVelocity, maxAcceleration, latency,
+                brakeDelayScale};
         for (double v : values) {
             if (Double.isNaN(v) || Double.isInfinite(v) || v < 0) return false;
         }
@@ -95,6 +103,8 @@ public class TurretTune {
         p.setProperty("maxVelocity", Double.toString(maxVelocity));
         p.setProperty("maxAcceleration", Double.toString(maxAcceleration));
         p.setProperty("latency", Double.toString(latency));
+        p.setProperty("brakeAware", Boolean.toString(brakeAware));
+        p.setProperty("brakeDelayScale", Double.toString(brakeDelayScale));
         if (ffSpeed != null) {
             StringBuilder table = new StringBuilder();
             for (int i = 0; i < ffSpeed.length; i++) {
@@ -140,6 +150,8 @@ public class TurretTune {
             t.maxVelocity = Double.parseDouble(p.getProperty("maxVelocity"));
             t.maxAcceleration = Double.parseDouble(p.getProperty("maxAcceleration"));
             t.latency = Double.parseDouble(p.getProperty("latency", "0"));
+            t.brakeAware = Boolean.parseBoolean(p.getProperty("brakeAware", "false"));
+            t.brakeDelayScale = Double.parseDouble(p.getProperty("brakeDelayScale", "1.5"));
 
             String table = p.getProperty("ffTable");
             if (table != null && !table.isEmpty()) {
@@ -161,8 +173,9 @@ public class TurretTune {
     @Override
     public String toString() {
         return String.format(
-                "kS=%.4f kV=%.6f kA=%.6f kP=%.5f kVelFb=%.6f maxCorr=%.2f maxVel=%.0f maxAcc=%.0f latency=%.3f table=%s",
+                "kS=%.4f kV=%.6f kA=%.6f kP=%.5f kVelFb=%.6f maxCorr=%.2f maxVel=%.0f maxAcc=%.0f latency=%.3f brake=%s/%.2f table=%s",
                 kS, kV, kA, kP, kVelocityFeedback, maxCorrection, maxVelocity, maxAcceleration, latency,
+                brakeAware, brakeDelayScale,
                 ffSpeed == null ? "none" : ffSpeed.length + "pts");
     }
 }
