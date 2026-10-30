@@ -51,5 +51,6 @@ public final class VisionParams {
     public double wallTouchCm = 15;           // a ball closer to a wall than this is taken head-on
     public double maxSpeedCmS = 180, maxAccelCmS2 = 250, headingRateDps = 360;
     public double replanS = 0.25, switchGainS = 0.6, minPlanS = 0.45;
+    public double headingLookaheadCm = 60, backHeadingOffsetDeg = 180;
     public double noTargetTimeoutS = 0.8, blacklistS = 3.5, stopDistCm = 8;
 }

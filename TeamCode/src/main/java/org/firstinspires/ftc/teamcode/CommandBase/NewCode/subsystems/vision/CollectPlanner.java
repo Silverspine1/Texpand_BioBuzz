@@ -58,8 +58,27 @@ public final class CollectPlanner {
     }
 
     /** Intake centreline offset in the planner's math frame (left of travel = (-uy, ux)); follows the frame handedness. */
+    /**
+     * The planner works in the DIRECTION OF TRAVEL: the intake always leads. A back intake (intakeForwardCm < 0) is a
+     * front intake for a robot reversing into the balls - its distance is |intakeForwardCm|, its side offset is mirrored
+     * and the robot heading is the travel heading + BACK_INTAKE_HEADING_OFFSET. Using the signed value put every capture
+     * pose 38 cm PAST its ball and bent the path start toward the robot's front - the wrong way for a robot reversing.
+     */
+    private boolean backIntake() {
+        return p.intakeForwardCm < 0;
+    }
+
+    private double reach() {
+        return Math.abs(p.intakeForwardCm);
+    }
+
+    /** Travel heading for a robot heading (deg). */
+    public double travelHeading(double robotHeadingDeg) {
+        return backIntake() ? robotHeadingDeg + p.backHeadingOffsetDeg : robotHeadingDeg;
+    }
+
     private double off() {
-        return p.intakeOffsetCm * p.lateralSign;
+        return (backIntake() ? -1 : 1) * p.intakeOffsetCm * p.lateralSign;
     }
 
     // ------------------------------------------------------------------------------------------
@@ -87,8 +106,8 @@ public final class CollectPlanner {
         for (int i = 0; i < 3; i++) {
             double nx = -u[1], ny = u[0];
             // left of the travel direction is (-uy, ux) in the planner (math) frame; lateral offsets are in that frame
-            c1 = new double[]{anchor[0] - u[0] * p.intakeForwardCm - nx * (lat + off()),
-                    anchor[1] - u[1] * p.intakeForwardCm - ny * (lat + off())};
+            c1 = new double[]{anchor[0] - u[0] * reach() - nx * (lat + off()),
+                    anchor[1] - u[1] * reach() - ny * (lat + off())};
             double dx = c1[0] - c0[0], dy = c1[1] - c0[1];
             if (Math.hypot(dx, dy) < 1e-6) break;
             u = unit(dx, dy);
@@ -106,7 +125,7 @@ public final class CollectPlanner {
             double rx = P[i][0] - c0[0], ry = P[i][1] - c0[1];
             double along = rx * u[0] + ry * u[1];
             double lat = -rx * u[1] + ry * u[0] - off();
-            if (along > 8.0 && along < L + p.intakeForwardCm + 3.0 && Math.abs(lat) <= p.intakeSideTolCm)
+            if (along > 8.0 && along < L + reach() + 3.0 && Math.abs(lat) <= p.intakeSideTolCm)
                 out.add(new double[]{i, along, lat});
         }
         return out;
@@ -164,7 +183,7 @@ public final class CollectPlanner {
                     cands.add(new Cand(new double[]{0.5 * (P[i][0] + P[j][0]), 0.5 * (P[i][1] + P[j][1])}, new int[]{i, j}, 0.0));
 
         Node start = new Node();
-        start.pos = pos; start.heading = pose[2];
+        start.pos = pos; start.heading = travelHeading(pose[2]);
         List<Node> frontier = new ArrayList<>();
         frontier.add(start);
         List<Node> pool = new ArrayList<>();
@@ -226,7 +245,7 @@ public final class CollectPlanner {
         double ux = c1[0] - prev[0], uy = c1[1] - prev[1];
         double L = Math.hypot(ux, uy);
         if (L > 1e-6 && (ux * n[0] + uy * n[1]) / L > 0.77) return null;
-        double[] cNew = clamp(new double[]{ball[0] - n[0] * p.intakeForwardCm, ball[1] - n[1] * p.intakeForwardCm});
+        double[] cNew = clamp(new double[]{ball[0] - n[0] * reach(), ball[1] - n[1] * reach()});
         double[] st = clamp(new double[]{cNew[0] - n[0] * (p.approachCm + 10), cNew[1] - n[1] * (p.approachCm + 10)});
         if (Math.hypot(st[0] - prev[0], st[1] - prev[1]) < 10 || Math.hypot(cNew[0] - st[0], cNew[1] - st[1]) < 10)
             return new double[]{Double.NaN, Double.NaN, cNew[0], cNew[1]};
@@ -323,7 +342,20 @@ public final class CollectPlanner {
             poly[i][1] = dense.get(j)[1] + f * (dense.get(j + 1)[1] - dense.get(j)[1]);
         }
         pl.polyline = poly;
-        // heading target: chord bearing of the leg being driven (the intake faces the ball AT the capture pose)
+        // heading target: the path's own direction headingLookaheadCm further along (what the follower does with
+        // path headings) - smooth, and the intake faces along the path at each capture
+        if (p.headingLookaheadCm > 0) {
+            double[] hl = new double[cnt];
+            int look = (int) Math.round(p.headingLookaheadCm);   // polyline is ~1 cm spaced
+            for (int i = 0; i < cnt; i++) {
+                int a = Math.min(i + look, cnt - 1), b = Math.max(a - 2, 0);
+                if (a == b) b = Math.max(a - 1, 0);
+                hl[i] = Math.toDegrees(Math.atan2(poly[a][1] - poly[b][1], poly[a][0] - poly[b][0]));
+            }
+            pl.polyHeading = hl;
+            return;
+        }
+        // (headingLookaheadCm = 0) chord bearing of the leg being driven
         int[] idx = new int[n];
         for (int k = 1; k < n; k++) {
             int best = idx[k - 1];
@@ -390,8 +422,8 @@ public final class CollectPlanner {
             if (i % 2 == 1) continue;
             double tx = Math.cos(h), ty = Math.sin(h);
             double nx = -ty, ny = tx;                                   // planner-frame left of the heading
-            double gx = pts[i][0] + tx * p.intakeForwardCm + nx * off();
-            double gy = pts[i][1] + ty * p.intakeForwardCm + ny * off();
+            double gx = pts[i][0] + tx * reach() + nx * off();
+            double gy = pts[i][1] + ty * reach() + ny * off();
             double alongTol = 6.35 + 0.02 * v;
             for (int b = 0; b < balls.length; b++) {
                 if (taken[b]) continue;
@@ -416,9 +448,9 @@ public final class CollectPlanner {
         Plan best = null;
         double bestScore = Double.MAX_VALUE;
         for (Plan pl : cands) {
-            buildPath(pl, pose[2]);
+            buildPath(pl, travelHeading(pose[2]));
             double[] tot = new double[1];
-            List<double[]> caps = predictCaptures(pl, pose[2], speedCmS, B, tot);
+            List<double[]> caps = predictCaptures(pl, travelHeading(pose[2]), speedCmS, B, tot);
             if (caps.size() > room) caps = caps.subList(0, room);
             double tCap = caps.isEmpty() ? tot[0] : caps.get(caps.size() - 1)[0];
             double score = tCap - p.ballValueS * caps.size();
