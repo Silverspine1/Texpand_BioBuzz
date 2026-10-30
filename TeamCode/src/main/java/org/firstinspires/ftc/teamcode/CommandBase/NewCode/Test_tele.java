@@ -89,7 +89,7 @@ public class Test_tele extends OpModeEX {
             RobotPower visionPower = vision.getDrivePower();
             if (visionPower != null) driveBase.drivePowers(visionPower);
             else driveBase.drivePowers(0, 0, 0);
-            IntakeHardware.Vertical = 1;
+            IntakeHardware.Vertical = -1;
             IntakeHardware.State = intakeHardware_doubleBot.intakeState.intaking;
         } else {
         driveBase.drivePowers(gamepad1.right_stick_y,-gamepad1.right_stick_x,(gamepad1.left_trigger- gamepad1.right_trigger));

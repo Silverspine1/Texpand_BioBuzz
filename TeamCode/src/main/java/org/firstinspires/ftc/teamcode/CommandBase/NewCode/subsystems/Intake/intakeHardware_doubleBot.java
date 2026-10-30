@@ -36,7 +36,7 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 
       public intakeState State = intakeState.off;
       public double Vertical = 0.00;
-      public double IntakingDrection = 0; //0=off 1=forward -1=backwards
+      public double IntakingDrection = 0;
       boolean intakeAfterReverse = false;
       public boolean blocking = true;
       boolean reverse;
@@ -70,7 +70,7 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
                   SBServo.setPosition(30);
                   if (Vertical > 0){
                       //front
-                      ITMFcurrentPower = 1;
+                      ITMFcurrentPower = -1;
                       ITMBcurrentPower = 0;
 
                       IntakingDrection = 1;
@@ -78,23 +78,23 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
                   } else if (Vertical<0) {
                       //back
                       ITMFcurrentPower = 0;
-                      ITMBcurrentPower = 1;
+                      ITMBcurrentPower = -1;
 
                       IntakingDrection = -1;
 
                   }else {
                       //continue
                       if (IntakingDrection == 1) {
-                          ITMFcurrentPower = 1;
+                          ITMFcurrentPower = -1;
                           ITMBcurrentPower = 0;
 
                       } else if (IntakingDrection == -1) {
                           ITMFcurrentPower = 0;
-                          ITMBcurrentPower = 1;
+                          ITMBcurrentPower = -1;
 
                       } else if (IntakingDrection == 0) {
-                          ITMFcurrentPower = 0;
-                          ITMBcurrentPower = 0;
+                          ITMFcurrentPower = -1;
+                          ITMBcurrentPower = -1;
                       }
 
 
@@ -107,18 +107,17 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 
                   if (Vertical > 0){
                       //front
-                      ITMFcurrentPower = -1;
+                      ITMFcurrentPower = 1;
                       ITMBcurrentPower = 0;
 
                   } else if (Vertical<0) {
                       //back
                       ITMFcurrentPower = 0;
-                      ITMBcurrentPower = -1;
+                      ITMBcurrentPower = 1;
 
                   }else {
-                      //off
-                      ITMFcurrentPower = 0;
-                      ITMBcurrentPower = 0;
+                      ITMFcurrentPower = 1;
+                      ITMBcurrentPower = 1;
                   }
 
                   break;
@@ -132,7 +131,7 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 
                   if (Vertical > 0){
                       //front
-                      ITMFcurrentPower = 1;
+                      ITMFcurrentPower = -1;
                       ITMBcurrentPower = -1;
 
                       IntakingDrection = 1;
@@ -140,19 +139,19 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
                   } else if (Vertical<0) {
                       //back
                       ITMFcurrentPower = -1;
-                      ITMBcurrentPower = 1;
+                      ITMBcurrentPower = -1;
 
                       IntakingDrection = -1;
 
                   }else {
                       //continue
                       if (IntakingDrection == 1) {
-                          ITMFcurrentPower = 1;
+                          ITMFcurrentPower = -1;
                           ITMBcurrentPower = -1;
 
                       } else if (IntakingDrection == -1) {
                           ITMFcurrentPower = -1;
-                          ITMBcurrentPower = 1;
+                          ITMBcurrentPower = -1;
 
                       } else if (IntakingDrection == 0) {
                           ITMFcurrentPower = -1;
