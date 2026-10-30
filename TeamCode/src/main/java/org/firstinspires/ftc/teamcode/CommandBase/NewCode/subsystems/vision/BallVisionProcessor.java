@@ -33,7 +33,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * kernel that scales with the ball's size AT THAT PIXEL (per-pixel, the lens makes size vary across the row),
  * fill holes, light opening. The pure-Java detector does the rest (it separates touching balls).
  *
- * Dashboard camera stream, chosen by VisionSubsystem.VIEW (a Dashboard number, X on gamepad1 in the Tuner):
+ * Dashboard camera stream AND the Driver Station camera preview, chosen by VisionSubsystem.VIEW (a Dashboard
+ * number; X on gamepad1 in the Tuner toggles camera / mask):
  *   0 = camera + circled balls    1 = the yellow mask    2 = camera through the mask    3 = camera | mask side by side
  * The mask panel also shows the single-ball size check: the CYAN circle is the ball blob's measured radius, the RED
  * circle is the radius the camera model expects there. Red much smaller than cyan => HFOV too big / lens mix wrong.
@@ -278,6 +279,11 @@ public class BallVisionProcessor implements VisionProcessor, CameraStreamSource 
             } else {
                 Imgproc.putText(maskPanel, "mask (no blob)", new Point(6, 16), Imgproc.FONT_HERSHEY_SIMPLEX, 0.5, cyan, 1);
             }
+            // the ball circles and the centre sampling box with its live HSV, so HSV can be tuned on the mask itself
+            for (ClusterDetector.Detection d : dets) {
+                Imgproc.circle(maskPanel, new Point(d.u * s, d.v * s), (int) Math.round(d.radiusPx * s), green, 2);
+            }
+            drawCentreBox(maskPanel, s, w, h, green, white);
             Imgproc.putText(maskPanel, String.format(Locale.US, "H %.0f-%.0f S %.0f-%.0f V %.0f-%.0f", VisionSubsystem.H_LOW,
                     VisionSubsystem.H_HIGH, VisionSubsystem.S_LOW, VisionSubsystem.S_HIGH, VisionSubsystem.V_LOW, VisionSubsystem.V_HIGH),
                     new Point(6, h * s - 8), Imgproc.FONT_HERSHEY_SIMPLEX, 0.5, white, 1);
@@ -320,6 +326,12 @@ public class BallVisionProcessor implements VisionProcessor, CameraStreamSource 
     public void onDrawFrame(Canvas canvas, int onscreenWidth, int onscreenHeight, float scaleBmpPxToCanvasPx,
                             float scaleCanvasDensity, Object userContext) {
         if (!(userContext instanceof List) || camera == null) return;
+        Bitmap shown = lastFrame.get();
+        if (VisionSubsystem.VIEW != 0 && shown != null) {
+            // Driver Station preview: show the selected view (mask etc.), overlays included
+            canvas.drawBitmap(shown, null, new android.graphics.Rect(0, 0, onscreenWidth, onscreenHeight), null);
+            return;
+        }
         Paint p = new Paint();
         p.setColor(Color.GREEN);
         p.setStyle(Paint.Style.STROKE);

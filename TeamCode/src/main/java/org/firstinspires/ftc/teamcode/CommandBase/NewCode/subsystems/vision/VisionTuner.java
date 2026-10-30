@@ -22,7 +22,8 @@ import java.util.List;
  *  gamepad1
  *    A   sample the ball colour: ball in the CENTRE box -> HSV window filled in
  *    B   save every VisionSubsystem value to /sdcard/FIRST/vision_tune.properties (loaded on every start)
- *    X   camera <-> mask      left stick button: next view (camera / mask / masked camera / side by side)
+ *    X   camera <-> mask (same as the SHOW_MASK tick box in Configuration > VisionTuner)
+ *        left stick button: next view (camera / mask / masked camera / side by side)
  *    D-pad up / down      CAM_HFOV_DEG  +1 / -1
  *    D-pad right / left   LENS_RECT_MIX +0.05 / -0.05  (0 = equidistant fisheye-like, 1 = pinhole)
  *    --- camera calibration (fits pitch, FOV and lens shape from balls at measured spots) ---
@@ -42,6 +43,8 @@ public class VisionTuner extends LinearOpMode {
 
     /** Where the ball for the next calibration mark is, cm from the chassis centre. */
     public static double TUNER_MARK_FORWARD_CM = 60, TUNER_MARK_LEFT_CM = 0;
+    /** Tick to show the yellow MASK instead of the camera (Dashboard stream and Driver Station preview). X toggles it too. */
+    public static boolean SHOW_MASK = false;
     /** Fit the lens mix as well as pitch and FOV (turn off to keep the lens shape fixed). */
     public static boolean FIT_LENS_MIX = true;
 
@@ -50,6 +53,8 @@ public class VisionTuner extends LinearOpMode {
         telemetry = new MultipleTelemetry(telemetry, FtcDashboard.getInstance().getTelemetry());
         VisionTuneFile.load();
         VisionSubsystem.SHOW_EXPECTED_SIZE = true;
+        SHOW_MASK = false;
+        boolean lastShowMask = false;
         VisionSubsystem.VIEW = 0;
         BallVisionProcessor proc = new BallVisionProcessor();
         VisionPortal portal = VisionSubsystem.buildPortal(hardwareMap, proc);
@@ -108,8 +113,16 @@ public class VisionTuner extends LinearOpMode {
                     status = "B: SAVE FAILED " + e.getMessage();
                 }
             }
-            if (x && !lastX) VisionSubsystem.VIEW = VisionSubsystem.VIEW == 1 ? 0 : 1;
-            if (ls && !lastLs) VisionSubsystem.VIEW = (VisionSubsystem.VIEW + 1) % 4;
+            if (x && !lastX) SHOW_MASK = VisionSubsystem.VIEW != 1;
+            if (SHOW_MASK != lastShowMask) {
+                VisionSubsystem.VIEW = SHOW_MASK ? 1 : 0;
+                lastShowMask = SHOW_MASK;
+            }
+            if (ls && !lastLs) {
+                VisionSubsystem.VIEW = (VisionSubsystem.VIEW + 1) % 4;
+                SHOW_MASK = VisionSubsystem.VIEW == 1;
+                lastShowMask = SHOW_MASK;
+            }
             if (up && !lastUp) VisionSubsystem.CAM_HFOV_DEG += 1;
             if (down && !lastDown) VisionSubsystem.CAM_HFOV_DEG -= 1;
             if (right && !lastRight) VisionSubsystem.LENS_RECT_MIX = Math.min(1, VisionSubsystem.LENS_RECT_MIX + 0.05);
