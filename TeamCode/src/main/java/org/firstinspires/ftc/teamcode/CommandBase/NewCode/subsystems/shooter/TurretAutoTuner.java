@@ -143,6 +143,9 @@ public class TurretAutoTuner {
     private double cutAngle;
     private double cutVelocity;
     private double coastFactor = 0.12;
+    private double gotoBoost = 0;
+    private double moveStalledSince = -1;
+    private double gotoStalledSince = -1;
 
     private final List<double[]> sweepPoints = new ArrayList<>();
     private final List<Double> t63Samples = new ArrayList<>();
@@ -310,15 +313,26 @@ public class TurretAutoTuner {
         haveCut = false;
         gotoMoving = true;
         gotoAttempts = 0;
+        gotoBoost = 0;
+        gotoStalledSince = -1;
         enter(State.GOTO);
     }
 
-    /** Open-loop move: drive, cut power early enough to coast in, retry gentler if it misses. */
+    /**
+     * Open-loop move: drive, cut power early enough to coast in, retry if it misses. Each retry is gentler for the
+     * overshoot, but never below breakaway power (that was a turret sitting still with the command at neutral), and a
+     * turret that is not moving gets more power. Close counts as there: the trials start from wherever it is.
+     */
     private void gotoStep() {
         double error = gotoTarget - angle;
         message = String.format("moving to %.0f deg (at %.1f)", gotoTarget, angle);
 
-        if (elapsed() > 15) {
+        if (elapsed() > 8 && Math.abs(error) < 25) {
+            io.setPower(0);
+            if (isStill(0.2)) enter(afterGoto);
+            return;
+        }
+        if (elapsed() > 40) {
             abort("couldn't reach " + gotoTarget + " deg");
             return;
         }
@@ -328,10 +342,20 @@ public class TurretAutoTuner {
                 io.setPower(0);
                 gotoMoving = false;
                 stillSince = -1;
+                gotoStalledSince = -1;
                 return;
             }
-            double scale = Math.pow(0.5, gotoAttempts);
-            double power = kSRamp + scale * (0.02 + Math.min(0.1, 0.003 * Math.abs(error)));
+            if (Math.abs(velocity) < 5) {
+                if (gotoStalledSince < 0) gotoStalledSince = now;
+                if (now - gotoStalledSince > 0.35) {
+                    gotoBoost = Math.min(maxPower - 1.1 * kSRamp, gotoBoost + 0.2 * kSRamp);
+                    gotoStalledSince = now;
+                }
+            } else {
+                gotoStalledSince = -1;
+            }
+            double scale = Math.pow(0.5, Math.min(gotoAttempts, 2));
+            double power = 1.12 * kSRamp + gotoBoost + scale * (0.02 + Math.min(0.1, 0.003 * Math.abs(error)));
             io.setPower(Math.signum(error) * Math.min(maxPower, power));
             return;
         }
@@ -345,6 +369,7 @@ public class TurretAutoTuner {
         }
         gotoAttempts++;
         gotoMoving = true;
+        gotoStalledSince = -1;
     }
 
     // ---------------------------------------------------------------- sweep
@@ -728,6 +753,7 @@ public class TurretAutoTuner {
         moveStartAngle = angle;
         moveOvershoot = 0;
         settleSince = -1;
+        moveStalledSince = -1;
         resetOscillationCheck();
         double distance = Math.abs(target - angle);
         moveTimeout = 1.5 + distance / trialGains.maxVelocity + trialGains.maxVelocity / trialGains.maxAcceleration;
@@ -784,6 +810,17 @@ public class TurretAutoTuner {
         if (problem != null) {
             failTrial(problem);
             return;
+        }
+
+        // A candidate that commands nothing (turret parked >10 deg off) is dropped after a second, not after the timeout.
+        if (Math.abs(velocity) < 3 && Math.abs(moveTarget - angle) > 10) {
+            if (moveStalledSince < 0) moveStalledSince = now;
+            if (now - moveStalledSince > 1.0) {
+                failTrial("turret not moving");
+                return;
+            }
+        } else {
+            moveStalledSince = -1;
         }
 
         double direction = Math.signum(moveTarget - moveStartAngle);

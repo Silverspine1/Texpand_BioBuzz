@@ -201,6 +201,11 @@ public class VisionSubsystem extends SubSystem {
      * fresh plan mid-path every REPLAN_S made the drive twitchy and sporadic. true = the old behaviour.
      */
     public static boolean REPLAN_WHILE_DRIVING = false;
+    /**
+     * Heading while collecting = the path's own direction this far ahead along it (the Follower's path-heading mode),
+     * plus BACK_INTAKE_HEADING_OFFSET for a back intake. 0 = the old per-leg chord, which jumped at every waypoint.
+     */
+    public static double PATH_HEADING_LOOKAHEAD_CM = 60;
     public static int PLAN_CANDIDATES = 8;
     public static boolean USE_TUNED_FILE = true;
     public static boolean SEND_DASHBOARD = true;
@@ -331,7 +336,9 @@ public class VisionSubsystem extends SubSystem {
         v.centerCostSPerCm = CENTER_PREFERENCE_S_PER_CM;
         v.cruiseFrac = CRUISE_FRACTION; v.overrunCm = OVERRUN_CM; v.wallMarginCm = WALL_MARGIN_CM; v.wallTouchCm = WALL_TOUCH_CM;
         v.maxSpeedCmS = MAX_SPEED_CM_S; v.maxAccelCmS2 = MAX_ACCEL_CM_S2; v.headingRateDps = MAX_TURN_DEG_S;
-        v.replanS = REPLAN_S; v.nCandidates = PLAN_CANDIDATES; v.noTargetTimeoutS = NO_TARGET_TIMEOUT_S;
+        v.replanS = REPLAN_S;
+        v.headingLookaheadCm = PATH_HEADING_LOOKAHEAD_CM;
+        v.backHeadingOffsetDeg = BACK_INTAKE_HEADING_OFFSET; v.nCandidates = PLAN_CANDIDATES; v.noTargetTimeoutS = NO_TARGET_TIMEOUT_S;
         return v;
     }
 
@@ -545,6 +552,7 @@ public class VisionSubsystem extends SubSystem {
         double target = CollectPlanner.headingTarget(plan, pose[0], pose[1], leg);
         // Back intake: the robot reverses into the balls, so its back has to lead.
         if (INTAKE_FORWARD_CM < 0) target += BACK_INTAKE_HEADING_OFFSET;
+        // with PATH_HEADING_LOOKAHEAD_CM > 0 the follower takes the heading from the path itself (target unused)
         drivePower = follow.followPathAuto(target, pose[2], pose[0], pose[1], vx, vy, op.odometry.getHeadingVelocityDeg());
         double[] end = plan.end();
         double endErr = Math.hypot(end[0] - pose[0], end[1] - pose[1]);
@@ -572,7 +580,12 @@ public class VisionSubsystem extends SubSystem {
         }
         paths.buildPath(sections);
         if (follow == null) follow = new Follower(new RobotConfig());
-        follow.usePathHeadings(false);
+        boolean pathHeadings = PATH_HEADING_LOOKAHEAD_CM > 0;
+        follow.usePathHeadings(pathHeadings);
+        if (pathHeadings) {
+            follow.setHeadingLookAheadDistance((int) Math.round(PATH_HEADING_LOOKAHEAD_CM / 0.25));   // path points are 0.25 cm
+            follow.setHeadingOffset(INTAKE_FORWARD_CM < 0 ? BACK_INTAKE_HEADING_OFFSET : 0);
+        }
         follow.setPath(paths.returnPath("vision"));
         plan = best;
         planStartS = now;
