@@ -31,11 +31,12 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 /**
  * VISION COLLECT subsystem (registered in OpModeEX as {@code vision}).
  *
- * What it does: sees the balls with the intake camera, keeps a map of their field positions (so a ball that
- * leaves the picture is still remembered for MEMORY_S), plans the fastest route that sweeps them into the
- * intake, follows it with the Nexus Follower and holds the intake on. It never touches the turret, flywheel or
- * trigger - shooting stays with the driver. It does NOT consider where the route ends (CONSIDER_END_POSITION is
- * off): it just collects as fast as possible.
+ * What it does: sees the balls with the intake camera, which is mounted on the BACK intake. It keeps a map of
+ * their field positions (so a ball that leaves the picture is still remembered for MEMORY_S), plans the fastest
+ * route that sweeps them into the intake, follows it with the Nexus Follower and holds the intake on. The robot
+ * reverses into the balls, so the back of the robot leads. It never touches the turret, flywheel or trigger -
+ * shooting stays with the driver. It does NOT consider where the route ends (CONSIDER_END_POSITION is off): it
+ * just collects as fast as possible.
  *
  * Use it from an OpMode:
  *   initEX():  vision.enable();                       // opens the camera (lazy: other OpModes never open it)
@@ -67,14 +68,17 @@ public class VisionSubsystem extends SubSystem {
      * (rectilinear). In between blends them. WRONG VALUE = wrong ball size = one ball split into several detections.
      */
     public static double LENS_RECT_MIX = 0.0;
-    /** Camera position from the chassis CENTRE: forward, left (+), up. cm. (Team measurement: 20 / 0 / 22.) */
-    public static double CAM_FORWARD_CM = 20;
+    /**
+     * Camera position from the chassis CENTRE: forward, left (+), up. cm. The camera is on the BACK, so forward is
+     * negative. -20 is a placeholder: measure your mount.
+     */
+    public static double CAM_FORWARD_CM = -20;
     public static double CAM_LEFT_CM = 0;
     public static double CAM_HEIGHT_CM = 22;
-    /** Tilt below horizontal, degrees (team measurement: 50). */
+    /** Tilt below horizontal, degrees. */
     public static double CAM_PITCH_DOWN_DEG = 50;
-    /** Camera yaw, + = turned left, degrees. */
-    public static double CAM_YAW_DEG = 0;
+    /** Camera yaw, + = turned left, degrees. 180 = camera faces the back of the robot. */
+    public static double CAM_YAW_DEG = 180;
     /** Capture size sent by the camera, and the (smaller) size the detector works at. */
     public static int CAPTURE_WIDTH = 640, CAPTURE_HEIGHT = 480;
     public static int WORK_WIDTH = 320;
@@ -102,8 +106,10 @@ public class VisionSubsystem extends SubSystem {
     // =====================================================================================================
     // 3. INTAKE  -  where the intake is relative to the chassis centre, and how picky to be.
     // =====================================================================================================
-    /** Chassis centre -> the point where a ball starts being pulled into the intake, cm. */
-    public static double INTAKE_FORWARD_CM = 38.1;
+    /**
+     * Chassis centre -> the point where a ball starts being pulled into the intake, cm. NEGATIVE = intake at the back.
+     */
+    public static double INTAKE_FORWARD_CM = -38.1;
     /** Mouth width, cm (information; the tolerance below is what the planner uses). */
     public static double INTAKE_WIDTH_CM = 44.5;
     /**
@@ -114,6 +120,11 @@ public class VisionSubsystem extends SubSystem {
     public static double INTAKE_SIDE_TOLERANCE_CM = 15;
     /** Intake centre line offset from the chassis centre, cm (+ = left). 0 if the intake is centred. */
     public static double INTAKE_OFFSET_CM = 0;
+    /**
+     * Back intake only: added to the planner's heading target so the back of the robot leads. Units match
+     * CollectPlanner.headingTarget (degrees here; set to Math.PI if that method returns radians).
+     */
+    public static double BACK_INTAKE_HEADING_OFFSET = 180;
     /** Seconds of route time each cm of off-centre costs. 0 = off-centre is free; bigger = prefers centring. */
     public static double CENTER_PREFERENCE_S_PER_CM = 0.005;
     /** Collect this many balls then stop (hopper size). */
@@ -148,6 +159,7 @@ public class VisionSubsystem extends SubSystem {
     // 5. FRAME  -  odometry handedness.  If a ball to the robot's LEFT is mapped to the wrong side, flip this.
     //    -1 (default): robot-left = (sin h, -cos h) in the odometry frame (what Follower's strafe maths implies);
     //    +1: robot-left = (-sin h, cos h).
+    //    This is about odometry, not the camera, so it does not change when the camera moves.
     // =====================================================================================================
     public static int LATERAL_SIGN = -1;
 
@@ -412,12 +424,18 @@ public class VisionSubsystem extends SubSystem {
         }
     }
 
-    /** A ball that has reached the intake mouth counts as taken (no hopper sensor is assumed). */
+    /**
+     * A ball that has reached the intake mouth counts as taken (no hopper sensor is assumed).
+     * Works for a front or back intake: the sign of the intake offset says which way the mouth points.
+     */
     private void consumeTracksInMouth(double[] pose) {
         if (state != State.COLLECTING) return;
+        double dir = Math.signum(params.intakeForwardCm);      // +1 front intake, -1 back intake
+        double reach = Math.abs(params.intakeForwardCm) * 0.55;
         for (BallMap.Track t : map.all()) {
             double[] rel = camera.fieldToRobot(t.x, t.y, pose);
-            if (rel[0] > 6 && rel[0] < params.intakeForwardCm * 0.55 && Math.abs(rel[1] - params.intakeOffsetCm) < params.intakeSideTolCm + 5) {
+            double along = rel[0] * dir;
+            if (along > 6 && along < reach && Math.abs(rel[1] - params.intakeOffsetCm) < params.intakeSideTolCm + 5) {
                 map.remove(t.id);
                 ballsTaken++;
             }
@@ -469,6 +487,8 @@ public class VisionSubsystem extends SubSystem {
         }
         noTargetS = 0;
         double target = CollectPlanner.headingTarget(plan, pose[0], pose[1], leg);
+        // Back intake: the robot reverses into the balls, so its back has to lead.
+        if (INTAKE_FORWARD_CM < 0) target += BACK_INTAKE_HEADING_OFFSET;
         drivePower = follow.followPathAuto(target, pose[2], pose[0], pose[1], vx, vy, op.odometry.getHeadingVelocityDeg());
         double[] end = plan.end();
         double endErr = Math.hypot(end[0] - pose[0], end[1] - pose[1]);

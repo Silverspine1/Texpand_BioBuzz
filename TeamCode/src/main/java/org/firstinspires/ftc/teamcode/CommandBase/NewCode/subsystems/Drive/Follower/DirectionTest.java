@@ -27,9 +27,9 @@ public class DirectionTest extends OpModeEX {
     private RobotConfig genConfig;
     private Follower safeFollow;
     boolean pathing = false;
-    double heading =270;
+    double heading =0;
     private final SectionBuilder[] shoot = new SectionBuilder[] {
-            () -> paths.addPoints(new Vector2D(0, 0), new Vector2D(40, 20)),
+            () -> paths.addPoints(new Vector2D(0, 0), new Vector2D(62.5, 62.5)),
     };
 
 
