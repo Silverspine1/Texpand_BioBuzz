@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Loca
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
 import org.firstinspires.ftc.teamcode.CommandBase.GoBildaPinpointDriver;
 import org.firstinspires.ftc.teamcode.CommandBase.GoBildaPinpointDriver.Register;
@@ -154,19 +155,42 @@ public class Odometry extends SubSystem {
         return -Math.toDegrees(HAcceleration);
     }
 
-    /** Sets the current pose (field cm, and heading in the same convention as Heading()). */
+    private boolean posePending = false;
+    private double pendingX, pendingY, pendingRaw;
+
+    /**
+     * Sets the current pose (field cm, and heading in the same convention as Heading()).
+     * The pose is written INTO the Pinpoint (once it reports READY - a write during
+     * the reset at init would be lost), so it keeps tracking in the field frame.
+     * The old way only offset heading in software: X/Y stayed in the Pinpoint's own
+     * frame, rotated against Heading() by however far the robot had turned, so every
+     * field-to-robot conversion (path following, vision ball map, aiming) was off by
+     * that angle.
+     */
     public void setPose(double xCm, double yCm, double headingDeg) {
         double rawTarget = normalizeDegrees(360 - headingDeg);
-        double rawNow = odo.getHeading(AngleUnit.DEGREES);
-
-        startX = xCm + odo.getPosX(DistanceUnit.CM);
-        startY = yCm - odo.getPosY(DistanceUnit.CM);
-        startHeading = rawTarget - rawNow;
-
+        pendingX = xCm;
+        pendingY = yCm;
+        pendingRaw = rawTarget;
+        posePending = true;
         X = xCm;
         Y = yCm;
         Heading = rawTarget;
         normilised = normalizeRadians(Math.toRadians(rawTarget));
+    }
+
+    /** Writes a pending pose once the Pinpoint is READY. @return true if it was written this call. */
+    private boolean applyPendingPose() {
+        if (!posePending) return false;
+        if (odo.getDeviceStatus() != GoBildaPinpointDriver.DeviceStatus.READY) return false;
+        double raw = pendingRaw > 180 ? pendingRaw - 360 : pendingRaw;
+        // inverse of the mapping in update(): X = startX - posX, Y = startY + posY, Heading = startHeading + raw
+        odo.setPosition(new Pose2D(DistanceUnit.CM, -pendingX, pendingY, AngleUnit.DEGREES, raw));
+        startX = 0;
+        startY = 0;
+        startHeading = 0;
+        posePending = false;
+        return true;
     }
 
     // Normalize a degree value into [0, 360)
@@ -188,6 +212,9 @@ public class Odometry extends SubSystem {
             () -> {
             },
             () -> {
+
+                // pose written this loop: the bulk read below would still be the old pose
+                if (applyPendingPose() || posePending) return;
 
                 odo.update();
 

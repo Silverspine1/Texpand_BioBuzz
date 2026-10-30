@@ -129,6 +129,14 @@ public class VisionSubsystem extends SubSystem {
     public static double CENTER_PREFERENCE_S_PER_CM = 0.005;
     /** Collect this many balls then stop (hopper size). */
     public static int BALLS_TO_COLLECT = 4;
+    /**
+     * Only go for the balls seen when the collect started, and stop once they are taken, instead of hunting on for
+     * more until BALLS_TO_COLLECT. A start ball is followed while its track stays within START_BALL_RADIUS_CM of
+     * where it was last seen; balls seen in the first START_LATCH_S count as start balls.
+     */
+    public static boolean ONLY_BALLS_SEEN_AT_START = true;
+    public static double START_BALL_RADIUS_CM = 25;
+    public static double START_LATCH_S = 0.25;
 
     // =====================================================================================================
     // 4. COLLECT BEHAVIOUR  -  speed model the planner uses (match the Follower's real capability) and rules.
@@ -167,7 +175,7 @@ public class VisionSubsystem extends SubSystem {
     // 6. DISPLAY  -  what the Dashboard camera stream shows (also X on gamepad1 in the Vision Tuner).
     // =====================================================================================================
     /** 0 = camera + circled balls, 1 = yellow MASK, 2 = camera through the mask, 3 = camera | mask side by side. */
-    public static int VIEW = 3;
+    public static int VIEW = 0;
     /** Draw red reference circles of the ball size the camera model expects (put a real ball on one to compare). */
     public static boolean SHOW_EXPECTED_SIZE = false;
     /** Half-size (px of the processed image) of the centre colour-sampling box. */
@@ -221,6 +229,9 @@ public class VisionSubsystem extends SubSystem {
     private double lastTickS = 0, tickDt = 0.02;
     private RobotPower drivePower = null;
     private final java.util.Map<Integer, Double> blacklist = new java.util.HashMap<>();
+    private final List<double[]> startBalls = new ArrayList<>();   // {x, y} of the balls seen at the start
+    private boolean startLatched;
+    private int collectTarget;
     private BallVisionProcessor.Result lastResult;
     private double lastDashboardS;
     public double fps, procMs;
@@ -348,6 +359,9 @@ public class VisionSubsystem extends SubSystem {
         collectStartS = nowS();
         blacklist.clear();
         drivePower = null;
+        startBalls.clear();
+        startLatched = false;
+        collectTarget = BALLS_TO_COLLECT;
     }
 
     public void stopCollect() {
@@ -438,6 +452,8 @@ public class VisionSubsystem extends SubSystem {
             if (along > 6 && along < reach && Math.abs(rel[1] - params.intakeOffsetCm) < params.intakeSideTolCm + 5) {
                 map.remove(t.id);
                 ballsTaken++;
+                int k = nearestStartBall(t.x, t.y, START_BALL_RADIUS_CM);
+                if (k >= 0) startBalls.remove(k);
             }
         }
     }
@@ -449,9 +465,39 @@ public class VisionSubsystem extends SubSystem {
         drivePower = null;
     }
 
+    private int nearestStartBall(double x, double y, double within) {
+        int best = -1;
+        double bestD = within;
+        for (int i = 0; i < startBalls.size(); i++) {
+            double d = Math.hypot(startBalls.get(i)[0] - x, startBalls.get(i)[1] - y);
+            if (d < bestD) { bestD = d; best = i; }
+        }
+        return best;
+    }
+
+    /** Remembers the balls in view during the first START_LATCH_S, then keeps their positions current. */
+    private void trackStartBalls(double now, double[] pose) {
+        if (!ONLY_BALLS_SEEN_AT_START) return;
+        List<BallMap.Track> seen = map.usable(pose);
+        if (!startLatched) {
+            double same = 2 * params.ballRadiusCm + 2;
+            for (BallMap.Track t : seen) if (nearestStartBall(t.x, t.y, same) < 0) startBalls.add(new double[]{t.x, t.y});
+            if (now - collectStartS >= START_LATCH_S && !startBalls.isEmpty()) {
+                startLatched = true;
+                collectTarget = Math.min(BALLS_TO_COLLECT, startBalls.size());
+            }
+        } else {
+            for (BallMap.Track t : seen) {
+                int k = nearestStartBall(t.x, t.y, START_BALL_RADIUS_CM);
+                if (k >= 0) { startBalls.get(k)[0] = t.x; startBalls.get(k)[1] = t.y; }
+            }
+        }
+    }
+
     private void collectTick(double now, double[] pose) {
-        int room = BALLS_TO_COLLECT - ballsTaken;
-        if (room <= 0) { finish("full"); return; }
+        trackStartBalls(now, pose);
+        int room = collectTarget - ballsTaken;
+        if (room <= 0) { finish(startLatched ? "took the balls seen at start" : "full"); return; }
         if (now - collectStartS > COLLECT_TIMEOUT_S) { finish("timeout"); return; }
         double vx = op.odometry.getXVelocity(), vy = op.odometry.getYVelocity();
         double speed = Math.hypot(vx, vy);
@@ -459,7 +505,10 @@ public class VisionSubsystem extends SubSystem {
         List<BallMap.Track> tracks = new ArrayList<>();
         for (BallMap.Track t : map.usable(pose)) {
             Double until = blacklist.get(t.id);
-            if (until == null || until < now) tracks.add(t);
+            if (until != null && until >= now) continue;
+            // once the start balls are known, balls that appear later are not chased
+            if (startLatched && nearestStartBall(t.x, t.y, START_BALL_RADIUS_CM) < 0) continue;
+            tracks.add(t);
         }
         if (!tracks.isEmpty() && now - lastPlanS >= params.replanS) {
             lastPlanS = now;
@@ -537,7 +586,7 @@ public class VisionSubsystem extends SubSystem {
             t.addData("nearest ball", "%.0f cm fwd, %.0f cm left (range %.0f, bearing %.0f deg)", n.xr, n.yr, n.rangeCm(), n.bearingDeg());
         }
         t.addData("seen / tracked", "%d / %d", lastResult == null ? 0 : lastResult.detections.size(), map == null ? 0 : map.size());
-        t.addData("balls taken", "%d / %d", ballsTaken, BALLS_TO_COLLECT);
+        t.addData("balls taken", "%d / %d%s", ballsTaken, collectTarget, startLatched ? " (balls seen at start)" : "");
         if (plan != null) t.addData("plan", "%d balls, %.2f s, %d legs", plan.nExpected, plan.tEst, plan.bezier.length);
     }
 

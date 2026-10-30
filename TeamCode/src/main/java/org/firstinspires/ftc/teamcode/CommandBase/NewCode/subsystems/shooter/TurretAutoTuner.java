@@ -66,6 +66,7 @@ public class TurretAutoTuner {
     private static final int OSCILLATION_REVERSALS = 3;
     private static final double OSCILLATION_ERROR = 1.5;
     private static final int VERIFY_ATTEMPTS = 4;
+    private static final int SEARCH_ROUNDS = 5;
     private static final double VERIFY_BACKOFF = 0.7;
     private static final double[][] SEARCH_KP_OF_KU = {{0.2, 0.3, 0.45}, {0.8, 1.2}};
 
@@ -474,6 +475,8 @@ public class TurretAutoTuner {
         if (table != null) {
             baseTune.ffSpeed = table[0];
             baseTune.ffPower = table[1];
+            // Power past the level where speed stops rising (servo output saturates) only wastes feedback range.
+            baseTune.maxCorrection = clamp(table[1][table[1].length - 1], 0.05, maxPower);
         }
 
         modelKP = 0.5 * fitKV / (tau + moveDelay);
@@ -771,6 +774,23 @@ public class TurretAutoTuner {
             TurretTune noKA = best.copy();
             noKA.kA = 0;
             candidates.add(noKA);
+        } else if (searchRound == 4) {
+            // Speed-demand control that uses the servo's neutral brake; compared against the profiled winner.
+            for (double m : new double[]{1.0, 1.5, 2.2}) {
+                TurretTune t = best.copy();
+                t.brakeAware = true;
+                t.brakeDelayScale = m;
+                t.maxVelocity = 0.97 * topSpeed;
+                candidates.add(t);
+            }
+            for (double m : new double[]{0.6, 1.6}) {
+                TurretTune t = best.copy();
+                t.brakeAware = true;
+                t.brakeDelayScale = 1.5;
+                t.maxVelocity = 0.97 * topSpeed;
+                t.maxAcceleration = clamp(best.maxAcceleration * m, 300, 30000);
+                candidates.add(t);
+            }
         } else {
             for (double m : SEARCH_KP_OF_KU[1]) {
                 TurretTune t = best.copy();
@@ -817,14 +837,14 @@ public class TurretAutoTuner {
         }
 
         searchRound++;
-        if (searchRound < 4) {
+        if (searchRound < SEARCH_ROUNDS) {
             buildSearchRound();
             if (!candidates.isEmpty()) {
                 startCandidate();
                 return;
             }
             searchRound++;
-            if (searchRound < 4) {
+            if (searchRound < SEARCH_ROUNDS) {
                 buildSearchRound();
                 startCandidate();
                 return;
