@@ -22,6 +22,13 @@ public class AxonEncoder {
 
     double offset = 0;
 
+    // The analog read occasionally returns one wild sample (logged: +-55 deg of turret for a single loop, only while
+    // moving fast). At the 12 ms-50 ms loop times seen, a real step is at most ~40 servo deg, so anything past this is
+    // dropped; a jump that persists is a real one (loop stall, re-zero) and is taken.
+    static final double SPIKE_SERVO_DEG = 90;
+    static final int SPIKE_CONFIRM_SAMPLES = 3;
+    int spikeSamples = 0;
+
     public void setOffset(double offset) {
         previousAngle += offset - this.offset;
         this.offset = offset;
@@ -50,6 +57,13 @@ public class AxonEncoder {
         } else if (difference < -180) {
             difference += 360;
         }
+
+        if (Math.abs(difference) > SPIKE_SERVO_DEG && spikeSamples < SPIKE_CONFIRM_SAMPLES - 1) {
+            spikeSamples++;
+            difference = 0;
+            return;
+        }
+        spikeSamples = 0;
 
         double dt = veloTimer.nanoseconds() / 1e9;
         veloTimer.reset();

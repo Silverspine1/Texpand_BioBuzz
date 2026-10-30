@@ -76,6 +76,16 @@ public class SetTurretAngle {
     // Brake-aware mode: the CR servo pair is a velocity source whose neutral is a hard brake, so the turret is driven
     // by a speed demand (stops in the remaining distance given the loop delay) instead of a position profile.
     // Demands under the creep speed are pulse-width modulated between creep and neutral so every pulse ends in a stop.
+    // Final approach: below the breakaway power P alone cannot close the last degrees (it just stalls short), so while the
+    // profile is done and the turret is nearly still a short pulse of 1.3 x kS is sent, then it waits to see where it stopped.
+    private static final double NUDGE_GAIN = 1.3;
+    private static final double NUDGE_PULSE = 0.015;
+    private static final double NUDGE_REST = 0.12;
+    private static final double NUDGE_MAX_SPEED = 8.0;
+    private long pulseEndNanos = 0;
+    private long pulseRestEndNanos = 0;
+    private double pulseSign = 0;
+
     private boolean brakeAware = false;
     private double brakeDelayScale = 1.5;
     private static final double BRAKE_BASE_DELAY = 0.012;
@@ -472,8 +482,11 @@ public class SetTurretAngle {
             movementDirection =
                     Math.signum(profileAcceleration);
         } else if (Math.abs(positionError) > positionTolerance) {
+            // Full kS only well outside tolerance: a full-size kS flipping sign with the error is a limit cycle
+            // on a servo that lags the command by ~50 ms.
             movementDirection =
-                    Math.signum(positionError);
+                    Math.signum(positionError)
+                            * Math.min(1.0, (Math.abs(positionError) - positionTolerance) / (3.0 * positionTolerance));
         } else {
             movementDirection = 0;
         }
@@ -501,6 +514,30 @@ public class SetTurretAngle {
                         maxCorrection
                 );
 
+        applyNudge(now);
+    }
+
+
+    private void applyNudge(long now) {
+        double pulsePower = kS * NUDGE_GAIN;
+        if (pulsePower <= 0 || Math.abs(profileVelocity) > PROFILE_EPSILON) {
+            pulseEndNanos = 0;
+            return;
+        }
+        if (now < pulseEndNanos) {
+            output = pulseSign * pulsePower;
+            return;
+        }
+        double error = targetPosition - Position;
+        if (Math.abs(error) > 0.6 * positionTolerance
+                && Math.abs(Velocity) < NUDGE_MAX_SPEED
+                && now >= pulseRestEndNanos
+                && Math.abs(output) < pulsePower) {
+            pulseSign = Math.signum(error);
+            pulseEndNanos = now + (long) (NUDGE_PULSE * 1e9);
+            pulseRestEndNanos = pulseEndNanos + (long) (NUDGE_REST * 1e9);
+            output = pulseSign * pulsePower;
+        }
     }
 
 

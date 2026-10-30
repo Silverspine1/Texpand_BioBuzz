@@ -50,7 +50,12 @@ public class TurretAutoTuner {
     private static final double KS_RAMP_RATE = 0.03;
     private static final double KS_RAMP_LIMIT = 0.3;
     private static final int KS_RAMPS = 4;
-    private static final double[] SWEEP_FRACTIONS = {0.05, 0.12, 0.25, 0.45, 0.7, 1.0};
+    // Speed saturates early on these servos (about 0.1 of command), so most levels sit at the low end.
+    private static final double[] SWEEP_FRACTIONS = {0.02, 0.05, 0.10, 0.18, 0.30, 0.50, 1.0};
+    private static final double REVERSAL_MIN_ERROR = 2.5;
+    private static final double SATURATION_STEP = 0.08;
+    private static final double SATURATED_FRACTION = 0.92;
+    private static final double ASYMMETRY_LIMIT = 0.35;
     private static final double RUN_TIMEOUT = 6.0;
     private static final double GOTO_TOLERANCE = 5.0;
     private static final double SETTLE_TOLERANCE = 1.0;
@@ -117,6 +122,7 @@ public class TurretAutoTuner {
     private final List<Double> moveDelaySamples = new ArrayList<>();
 
     private double fitKS, fitKV, fitR2, kVPositive, kVNegative;
+    private double satPower = 0.5;
     private double responseTime, moveDelay, tau, topSpeed;
     private double reversalSpeed = 25;
 
@@ -330,6 +336,12 @@ public class TurretAutoTuner {
             return;
         }
 
+        if (runIndex % 2 == 0 && runIndex >= 6 && saturationReached()) {
+            runIndex = sweepPlan.size();
+            analyzeSweep();
+            return;
+        }
+
         RunPlan plan = sweepPlan.get(runIndex);
         if (angle * plan.dir > -0.5 * safeRange) {
             startGoto(-plan.dir * safeRange, State.SWEEP_REST);
@@ -390,7 +402,8 @@ public class TurretAutoTuner {
                 if ((s[1] - runStartAngle) * plan.dir >= fromFraction * distance) tail.add(s);
             }
             if (tail.size() >= 4 && tail.get(tail.size() - 1)[0] - tail.get(0)[0] >= 0.06) {
-                fit = lineFit(tail, 0, 1);
+                // Median of pairwise slopes: one wild encoder sample can't move it (a least-squares line did).
+                fit = new double[]{0, robustSlope(tail), 1};
                 break;
             }
         }
@@ -436,22 +449,45 @@ public class TurretAutoTuner {
             return;
         }
 
-        double[] fit = fitPowerVsSpeed(sweepPoints, 0);
+        // Fit only below saturation: above it speed stops rising with power and a straight line is meaningless.
+        double maxSpeed = 0;
+        for (double[] p : sweepPoints) maxSpeed = Math.max(maxSpeed, p[1]);
+        List<double[]> linear = new ArrayList<>();
+        for (double[] p : sweepPoints) {
+            if (p[1] < SATURATED_FRACTION * maxSpeed) linear.add(p);
+        }
+        if (linear.size() < 3) linear = sweepPoints;
+        satPower = maxPower;
+        for (double[] p : sweepPoints) {
+            if (p[1] >= SATURATED_FRACTION * maxSpeed) satPower = Math.min(satPower, p[0]);
+        }
+
+        double[] fit = fitPowerVsSpeed(linear, 0);
         fitKS = fit[0];
         fitKV = fit[1];
         fitR2 = fit[2];
-        kVPositive = fitPowerVsSpeed(sweepPoints, 1)[1];
-        kVNegative = fitPowerVsSpeed(sweepPoints, -1)[1];
+        kVPositive = directionKV(linear, 1, fit[0]);
+        kVNegative = directionKV(linear, -1, fit[0]);
 
         if (!(fitKV > 0)) {
             abort("speed didn't increase with power - check the turret isn't jammed");
             return;
         }
-        if (fitR2 < 0.9) {
+        if (fitR2 < 0.7) {
             warning = String.format("speed vs power isn't very linear (R2 %.2f)", fitR2);
         }
-        if (Math.abs(kVPositive - kVNegative) > 0.25 * fitKV) {
-            warning = "one direction is noticeably weaker than the other";
+        // Compare the plateau speeds, not the slopes: slopes come from a few runs near breakaway, where the same
+        // servo legitimately starts differently each way (stiction), and read as a false "weak side".
+        double topPositive = 0, topNegative = 0;
+        for (double[] p : sweepPoints) {
+            if (p[1] >= SATURATED_FRACTION * maxSpeed) {
+                if (p[2] > 0) topPositive = Math.max(topPositive, p[1]);
+                else topNegative = Math.max(topNegative, p[1]);
+            }
+        }
+        if (topPositive > 0 && topNegative > 0
+                && Math.abs(topPositive - topNegative) > ASYMMETRY_LIMIT * Math.max(topPositive, topNegative)) {
+            warning = String.format("top speed differs by direction (%.0f vs %.0f deg/s)", topPositive, topNegative);
         }
 
         double kS = clamp(fitKS, 0.85 * kSRamp, kSRamp);
@@ -461,22 +497,22 @@ public class TurretAutoTuner {
         tau = Math.max(0.015, responseTime - moveDelay);
         double[][] table = buildFeedforwardTable(kS);
         topSpeed = table != null ? table[0][table[0].length - 1] : (maxPower - kS) / fitKV;
-        reversalSpeed = Math.max(20, 0.08 * topSpeed);
+        reversalSpeed = Math.max(25, 0.15 * topSpeed);
 
         baseTune = new TurretTune();
         baseTune.kS = kS;
         baseTune.kV = fitKV;
         baseTune.kA = fitKV * tau;
         baseTune.kVelocityFeedback = 0;
-        baseTune.maxCorrection = maxPower;
+        baseTune.maxCorrection = clamp(1.15 * satPower, 0.06, maxPower);
         baseTune.maxVelocity = 0.75 * topSpeed;
         baseTune.maxAcceleration = clamp(0.35 * topSpeed / tau, 300, 30000);
-        baseTune.latency = clamp(responseTime, 0, 0.3);
+        // Pure transport delay plus half the rise; the slew-limited rise itself is the profile's job (maxAcceleration).
+        baseTune.latency = clamp(moveDelay + 0.5 * tau, 0, 0.3);
         if (table != null) {
             baseTune.ffSpeed = table[0];
             baseTune.ffPower = table[1];
             // Power past the level where speed stops rising (servo output saturates) only wastes feedback range.
-            baseTune.maxCorrection = clamp(table[1][table[1].length - 1], 0.05, maxPower);
         }
 
         modelKP = 0.5 * fitKV / (tau + moveDelay);
@@ -507,7 +543,7 @@ public class TurretAutoTuner {
         rows.add(new double[]{0, kS});
         for (double[] level : levels) {
             double[] prev = rows.get(rows.size() - 1);
-            if (level[0] > prev[0] && level[1] > prev[1]) rows.add(level);
+            if (level[0] > 1.05 * prev[0] + 1 && level[1] > prev[1]) rows.add(level);
         }
         if (rows.size() < 3) return null;
 
@@ -567,7 +603,8 @@ public class TurretAutoTuner {
             return "left the safe range";
         }
 
-        if (Math.abs(velocity) > reversalSpeed) {
+        // Reversals only count away from the target: small corrective moves at the end are not oscillation.
+        if (Math.abs(velocity) > reversalSpeed && Math.abs(target - angle) > REVERSAL_MIN_ERROR) {
             double sign = Math.signum(velocity);
             if (lastVelocitySign != 0 && sign != lastVelocitySign) reversals++;
             lastVelocitySign = sign;
@@ -970,6 +1007,51 @@ public class TurretAutoTuner {
         io.setPower(0);
         message = "ABORTED: " + reason;
         state = State.ABORTED;
+    }
+
+    /** Speed at the two highest sweep powers measured so far is no longer rising: stop adding levels. */
+    private boolean saturationReached() {
+        double lastPower = -1, prevPower = -1;
+        double lastSum = 0, prevSum = 0;
+        int lastN = 0, prevN = 0;
+        for (double[] p : sweepPoints) {
+            if (p[0] > lastPower + 1e-9) {
+                prevPower = lastPower; prevSum = lastSum; prevN = lastN;
+                lastPower = p[0]; lastSum = 0; lastN = 0;
+            }
+            lastSum += p[1];
+            lastN++;
+        }
+        if (prevN == 0 || lastN == 0) return false;
+        double last = lastSum / lastN, prev = prevSum / prevN;
+        return last <= (1 + SATURATION_STEP) * prev;
+    }
+
+    /** Median of (power - kS) / speed over one direction's points: robust to the stiction-affected low runs. */
+    private static double directionKV(List<double[]> points, int dir, double kS) {
+        List<Double> ratios = new ArrayList<>();
+        for (double[] p : points) {
+            if (p[2] == dir && p[1] > 0) ratios.add(Math.max(0, p[0] - kS) / p[1]);
+        }
+        return ratios.isEmpty() ? Double.NaN : median(ratios);
+    }
+
+    private static int countDirection(List<double[]> points, int dir) {
+        int n = 0;
+        for (double[] p : points) if (p[2] == dir) n++;
+        return n;
+    }
+
+    /** Median of slopes between sample pairs at least 3 samples apart. columns: x=time, y=angle. */
+    private static double robustSlope(List<double[]> rows) {
+        List<Double> slopes = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            for (int j = i + 3; j < rows.size(); j++) {
+                double dt = rows.get(j)[0] - rows.get(i)[0];
+                if (dt > 1e-6) slopes.add((rows.get(j)[1] - rows.get(i)[1]) / dt);
+            }
+        }
+        return slopes.isEmpty() ? Double.NaN : median(slopes);
     }
 
     /** Least squares y = a + b x over columns xi, yi. Returns {a, b, r2}. */
