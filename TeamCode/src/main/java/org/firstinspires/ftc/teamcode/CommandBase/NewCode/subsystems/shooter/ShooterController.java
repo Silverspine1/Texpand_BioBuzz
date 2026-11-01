@@ -81,7 +81,7 @@ public class ShooterController extends SubSystem {
     public void testTurretTo(double angleDeg) {
         targeting = false;
         turretDebugMode = TurretDebugMode.CLOSED_LOOP;
-        turretController.setTarget(-angleDeg, 1.0, false);
+        turretController.setTarget(angleDeg, 1.0, false);
     }
 
     public ShooterController(OpModeEX opModeEX) {
@@ -387,7 +387,7 @@ public class ShooterController extends SubSystem {
             double step = Double.isNaN(lastTurretCmd) ? 1e9 : Math.abs(((turCmd - lastTurretCmd + 540.0) % 360.0) - 180.0);
             if (still && step <= ShotControlTuning.turretHoldBandDeg) turCmd = lastTurretCmd;   // hold: ignore sub-band noise
             lastTurretCmd = turCmd;
-            turretController.setTarget(-turCmd, 1.0, false);
+            turretController.setTarget(turCmd, 1.0, false);
             setUnderHoodDegrees(Double.isNaN(forceHoodDeg) ? reduced.hoodDeg : forceHoodDeg);
         }
         reduced.sense(now, RPM, getTurretAimDeg(), encoder.getVelocity(), OdoMetry.getHeadingVelocityDeg());

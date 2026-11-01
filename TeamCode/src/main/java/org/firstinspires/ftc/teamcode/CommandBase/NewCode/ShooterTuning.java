@@ -29,7 +29,7 @@ public class ShooterTuning {
 
     // The old Shotplanner's shot physics, hood launch-angle mapping and goal positions are deleted: the reduced model
     // (ShotControlTuning) owns the goal, the hood (hoodServoPosAtZero / AtMax) and the rpm.
-    public static double turretAxisForwardMeters = 0.1;
+    public static double turretAxisForwardMeters = 0.05;
     // Sideways offset of the turret axis from the odometry point. Positive is toward the side heading increases toward.
     public static double turretAxisSidewaysMeters = 0.0;
     // true = the program ASSUMES the turret points exactly straight forward when it starts (INIT and again at PLAY): the encoder
@@ -58,8 +58,8 @@ public class ShooterTuning {
     public static double flywheelReadyPercent = 3.0;
 
     // Start pose used by Test_tele / Shot Tuner at init and by their set-pose button (cm, degrees)
-    public static double startXcm = 0;
-    public static double startYcm = 0;
+    public static double startXcm = 20;
+    public static double startYcm = 344;
     public static double startHeadingDeg = 0;
 
     private static boolean tunable(Field f) {
