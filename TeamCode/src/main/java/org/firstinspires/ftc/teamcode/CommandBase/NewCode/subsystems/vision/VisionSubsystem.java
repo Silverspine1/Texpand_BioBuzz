@@ -97,9 +97,9 @@ public class VisionSubsystem extends SubSystem {
     // 2. COLOUR  -  HSV window for the ball (OpenCV scale: H 0-179, S/V 0-255).  Vision Tuner: press A
     //    with a ball in the centre of the picture to fill these in automatically.
     // =====================================================================================================
-    public static double H_LOW = 18, H_HIGH = 38;
-    public static double S_LOW = 90, S_HIGH = 255;
-    public static double V_LOW = 70, V_HIGH = 255;
+    public static double H_LOW = 14, H_HIGH = 30;
+    public static double S_LOW = 145, S_HIGH = 255;
+    public static double V_LOW = 115, V_HIGH = 255;
     /** Margins the auto-sample adds around the sampled ball colour. */
     public static double AUTO_H_MARGIN = 12, AUTO_S_MARGIN = 70, AUTO_V_MARGIN = 90;
 

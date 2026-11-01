@@ -7,10 +7,10 @@ import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.Tur
 /** Live-editable from FTC Dashboard (192.168.43.1:8080/dash) while Test_tele runs. */
 @Config
 public class TurretTuning {
-    public static double kS = 0.0;
-    public static double kV = 0.0020;
-    public static double kA = 0.0;
-    public static double kP = 0.004;
+    public static double kS = 0.0192;
+    public static double kV = 0.0004;
+    public static double kA = 0.000008;
+    public static double kP = 0.0036;
     public static double kVelocityFeedback = 0.0;
     public static double maxCorrection = 0.4;
 

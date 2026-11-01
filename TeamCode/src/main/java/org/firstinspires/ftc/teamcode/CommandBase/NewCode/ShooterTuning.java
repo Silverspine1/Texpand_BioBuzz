@@ -28,8 +28,9 @@ public class ShooterTuning {
     private static final String[] RESET_ON_UPGRADE = {"flywheelTicksPerRev", "flywheelKF"};
 
     // The old Shotplanner's shot physics, hood launch-angle mapping and goal positions are deleted: the reduced model
+    // (ShotControlTuning) owns the goal, the hood (hoodServoPosAtZero / AtMax) and the rpm.
+    public static double turretAxisForwardMeters = 0.05;
     // (ShotControlTuning) owns the goal, the hood (hoodServoBottom / Top) and the rpm.
-    public static double turretAxisForwardMeters = 0.1;
     // Sideways offset of the turret axis from the odometry point. Positive is toward the side heading increases toward.
     public static double turretAxisSidewaysMeters = 0.0;
     // true = the program ASSUMES the turret points exactly straight forward when it starts (INIT and again at PLAY): the encoder

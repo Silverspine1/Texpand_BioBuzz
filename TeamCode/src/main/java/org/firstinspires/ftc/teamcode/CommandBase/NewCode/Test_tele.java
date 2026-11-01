@@ -70,6 +70,8 @@ public class Test_tele extends OpModeEX {
         vision.enable();   // opens the camera for the vision collect button (gamepad1 START)
     }
 
+
+
     @Override
     public void loopEX() {
         Loop.reset();
@@ -94,7 +96,7 @@ public class Test_tele extends OpModeEX {
             IntakeHardware.Vertical = -1;
             IntakeHardware.State = intakeHardware_doubleBot.intakeState.intaking;
         } else {
-        driveBase.drivePowers(gamepad1.right_stick_y,-gamepad1.right_stick_x,(gamepad1.left_trigger- gamepad1.right_trigger));
+        driveBase.driveFieldCentric(gamepad1.right_stick_y,-gamepad1.right_stick_x,(gamepad1.left_trigger- gamepad1.right_trigger),odometry.Heading());
         IntakeHardware.Vertical = driveBase.vertical;
         // FEED = gamepad1 left bumper. With the reduced controller active the fire gate HOLDS it until FireGate says FIRE
         // (ShotControlTuning.gateHoldsFire; gamepad2 B = override, gamepad2 left bumper = movement protection ON/OFF).
@@ -206,6 +208,7 @@ public class Test_tele extends OpModeEX {
         ShotDebug.flywheel(shooterController, telemetry::addData);
         loop = Loop.milliseconds();
         telemetry.addData("loot time(ms)", "%.1f", loop);
+
 
     }
 

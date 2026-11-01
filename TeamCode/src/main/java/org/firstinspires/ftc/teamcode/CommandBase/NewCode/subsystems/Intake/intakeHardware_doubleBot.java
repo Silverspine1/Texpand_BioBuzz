@@ -53,7 +53,7 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
           IMotorB.initMotor("IMotorB", getOpMode().hardwareMap);
           SBServo.initServo("SBServo", getOpMode().hardwareMap);
 
-          SBServo.setRange(255);
+          SBServo.setRange(355);
       }
 
       @Override
@@ -67,7 +67,7 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
                   break;
 
               case intaking:
-                  SBServo.setPosition(30);
+                  SBServo.setPosition(60);
                   if (Vertical > 0){
                       //front
                       ITMFcurrentPower = -1;
@@ -103,7 +103,7 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
                   break;
 
               case ejecting:
-                  SBServo.setPosition(30);
+                  SBServo.setPosition(60);
 
                   if (Vertical > 0){
                       //front

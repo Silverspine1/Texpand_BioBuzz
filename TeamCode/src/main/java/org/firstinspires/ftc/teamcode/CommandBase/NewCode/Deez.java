@@ -17,6 +17,8 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 
+import dev.weaponboy.nexus_command_base.Hardware.ServoDegrees;
+
 @Config
 @TeleOp
 public class Deez extends OpMode {
@@ -41,6 +43,9 @@ public class Deez extends OpMode {
     DcMotorEx TestMotter, TestMotter1, TestMotter2,TestMotter3;
     Servo flower;
     DcMotor frontLeft, frontRight, backLeft, backRight;
+    public Servo Hood ;
+    double hood = 0.2;
+
 
     // ---------- State ----------
     double MaxSpeed = 0;
@@ -76,14 +81,16 @@ public class Deez extends OpMode {
         TestMotter = hardwareMap.get(DcMotorEx.class, "shooterMotor");
         TestMotter3 = hardwareMap.get(DcMotorEx.class, "shooterMotor2");
 
-        TestMotter1 = hardwareMap.get(DcMotorEx.class, "IMotor");
-        TestMotter2 = hardwareMap.get(DcMotorEx.class, "TMotor");
-        flower = hardwareMap.get(Servo.class, "flowerServo");
+        TestMotter1 = hardwareMap.get(DcMotorEx.class, "IMotorF");
+        TestMotter2 = hardwareMap.get(DcMotorEx.class, "IMotorB");
+        Hood = hardwareMap.get(Servo.class, "hoodServ");
+
+
 
         // Bypass the built-in velocity PID, we do our own
         TestMotter.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         TestMotter.setDirection(DcMotorSimple.Direction.FORWARD);
-        TestMotter2.setDirection(DcMotorSimple.Direction.REVERSE);
+        TestMotter2.setDirection(DcMotorSimple.Direction.FORWARD);
 
         TestMotter3.setDirection(DcMotorSimple.Direction.FORWARD); // positive target = shooting direction
 // positive target = shooting direction
@@ -161,6 +168,13 @@ public class Deez extends OpMode {
         } else if (gamepad1.dpadLeftWasPressed()) {
             TargetSpeed -= 40;
         }
+        if (gamepad1.aWasPressed()){
+            hood += 0.001;
+        }
+        if (gamepad1.bWasPressed()){
+            hood -= 0.001;
+        }
+        Hood.setPosition(hood);
 
         if (gamepad1.dpadUpWasPressed()) {
             TargetSpeed2 += 40;
@@ -180,7 +194,7 @@ public class Deez extends OpMode {
 
         // Intake / transfer
         if (gamepad1.right_bumper) {
-            TestMotter1.setPower(1);
+            TestMotter1.setPower(-1);
         } else {
             TestMotter1.setPower(0);
         }
@@ -201,7 +215,6 @@ public class Deez extends OpMode {
         if (gamepad1.b) {
             pow = 0.72;
         }
-        flower.setPosition(pow);
 
         // Drive
         double y = applyDeadband(gamepad1.right_stick_y, DEADBAND);
@@ -233,12 +246,6 @@ public class Deez extends OpMode {
         double shooterRpm = (shooterVelo / MOTOR_TICKS_PER_REV) * 60.0;
         double targetRpm = (TargetSpeed / MOTOR_TICKS_PER_REV) * 60.0;
 
-        TelemetryPacket packet = new TelemetryPacket();
-        packet.put("Target RPM", targetRpm);
-        packet.put("Shooter Actual RPM", shooterRpm);
-        packet.put("Power (scaled to RPM)", shooterPower * POWER_GRAPH_SCALE);
-        packet.put("Shooter power %", shooterPower * 100);
-        dashboard.sendTelemetryPacket(packet);
 
         // Driver Hub telemetry
         telemetry.addData("one", one.getState());
