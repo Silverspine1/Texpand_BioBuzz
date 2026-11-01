@@ -108,7 +108,10 @@ public final class ShotDebug {
         out.accept("battery / wheel ceiling", f("%.2f V / %.0f rpm  (%.2f x %.0f x V/12; the solve never asks for more)", sc.batteryVolts, ceiling,
                 ShotControlTuning.rpmMaxNoLoadFraction, ShotControlTuning.wheelNoLoadRpmAt12V));
         if (r.hasModel()) {
-            out.accept("solve rpm cmd / at release", f("%.0f / %.0f   model max %.0f", r.rpmCmd, r.result.rpmAtRelease, r.rpmMaxEff));
+            out.accept("rpm cmd (real) / model", f("%.0f = model %.0f x rpmScale %.2f   max %.0f", r.rpmCmd, r.result.rpmCmd,
+                    r.rpmScaleUsed, r.rpmMaxEff));
+            out.accept("exit angle wanted (model) / offset", f("%.1f deg / %+.1f deg  (hood %.2f of 0..6.3)", r.result.angle,
+                    ShotControlTuning.angleOffsetDeg, r.hoodDeg));
             out.accept("hood cmd", f("%.2f deg of hood travel (0..6.3) -> servo position %.4f  (%.3f bottom .. %.3f top; check the hood really moves)",
                     r.hoodDeg, ShooterController.underHoodServoPos(r.hoodDeg),
                     ShotControlTuning.hoodServoPosAtZero, ShotControlTuning.hoodServoPosAtMax));

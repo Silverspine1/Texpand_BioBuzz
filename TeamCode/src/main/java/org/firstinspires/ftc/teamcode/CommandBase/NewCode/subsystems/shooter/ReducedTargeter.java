@@ -50,6 +50,9 @@ public final class ReducedTargeter {
 
     /** Driver trim of the exit speed [%], applied in exit space before the inverse (0 = Python parity). */
     public double speedTrimPct = 0.0;
+    /** Field tuning: the real shooter launches this many degrees STEEPER than the model (exit space, before the inverse;
+     *  0 = Python parity). Negative = flatter. */
+    public double angleOffsetDeg = 0.0;
 
     // scratch outputs of bicubic() / trilinear() (no allocation)
     private double bv, bdr, bdh;
@@ -299,7 +302,7 @@ public final class ReducedTargeter {
             sl = Math.sin(psiR);
         }
         boolean ok = tOk;
-        double speed = tSpeed * (1.0 + 0.01 * speedTrimPct), angle = tAngle;
+        double speed = tSpeed * (1.0 + 0.01 * speedTrimPct), angle = tAngle - angleOffsetDeg;
         // 5. inverse of the shot model (Newton, n_inv iterations)
         double rpm = tRpm, hood = tHood;
         double rLo = C.shotRpm[0], rHi = Math.min(C.shotRpm[C.nR - 1], C.rpmMax);
