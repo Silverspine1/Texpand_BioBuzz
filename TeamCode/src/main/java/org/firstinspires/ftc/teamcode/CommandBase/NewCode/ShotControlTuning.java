@@ -37,12 +37,16 @@ public class ShotControlTuning {
     /** Master switch for the new rpm / hood / turret command source. false = old behaviour, unchanged. */
     public static boolean enabled = false;
     /** Alliance (the Java pose is one fixed field frame; blue is rotated 180 deg into its team frame). */
+    /** Flywheel motor direction. false = FORWARD (positive power spins the wheel to shoot). The earlier hard-coded REVERSE
+     *  (commit 'reverse', old shooter) ran the under-shooter wheel backwards on the first robot test (2026-11-01). Flip it
+     *  on the Dashboard if the wheel spins the wrong way; Shot Tuner shows a BACKWARDS warning. */
+    public static boolean shooterMotorReversed = false;
     public static boolean blueAlliance = true;
     /** Use the optional field-tune export next to the model when it exists. */
     public static boolean useFieldTune = true;
     /** Model file name in /sdcard/FIRST/settings/ (blank = ReducedShotModel.MODEL_FILE). Recommended:
      *  robot_model_red_audience_r4.json. */
-    public static String modelFile = "robot_model_red_audience.json";
+    public static String modelFile = "robot_model_red_audience_r4.json";
     /** Field-tune export in /sdcard/FIRST/settings/ applied over the model's shot block (ShotTuner: gamepad2 right stick
      *  button toggles useFieldTune; change the name here to swap exports, then gamepad2 left stick button reloads). */
     public static String fieldTuneFile = "under_shooter_field_tune.json";
@@ -88,6 +92,7 @@ public class ShotControlTuning {
     public static double gateRpmTolRpm = 40.0;       // refuse: |wheel cmd - meas| above this (command static)
     public static double gateRpmStaticRps = 400.0;   // wheel command counts as static below this rate [rpm/s]
     public static double gateOmegaMaxDps = 250.0;    // refuse: |yaw rate| above this
+    public static double gateAccelHoldIps2 = 100.0;  // hold while |a| or |d speed/dt| of the chassis velocity exceeds this [in/s^2]; 0 = off
     public static double gateLookEps = 0.03;         // wait while a look-ahead claim beats the current one by this
     public static boolean gateLookAhead = true;      // 5 extra solves per solve (horizons 0.04..0.30 s)
     public static double gateWindowS = 1.0;          // driver window after a request (gamepad2 A in Test_tele)

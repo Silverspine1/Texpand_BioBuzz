@@ -40,6 +40,8 @@ public class ShooterController extends SubSystem {
     public double flywheelPower = 0;
     public double manualFlywheelPower = 0;
     public double flywheelTicksPerSecond = 0;
+    /** Direction applied to the flywheel motor, and: power > 0.3 but the measured rpm negative (wrong motor direction or encoder sign). */
+    public boolean appliedReversed = false, flywheelBackwards = false;
     public boolean targeting = false;
 
     public enum TurretDebugMode { OFF, MANUAL, CLOSED_LOOP }
@@ -108,9 +110,10 @@ public class ShooterController extends SubSystem {
 
         applyTuning();
         loopTimer.reset();
-        shooterMotor.setDirection(DcMotorSimple.Direction.REVERSE);
+        zeroTurretAtStart();
 
         ShotControlTuning.load();
+        applyMotorDirection();
         try {
             battery = getOpMode().hardwareMap.voltageSensor.iterator().next();
             batteryVolts = battery.getVoltage();
@@ -148,6 +151,24 @@ public class ShooterController extends SubSystem {
             reduced.setModel(null);
             reducedStatus = "load failed: " + t.getMessage();
         }
+    }
+
+    /**
+     * The turret is ASSUMED to point exactly straight forward when the program starts (ShooterTuning.assumeTurretForwardAtStart,
+     * default true): zero the encoder where it is and ignore any saved turretZeroOffsetDeg. Called at init() and again at PLAY
+     * (OpModeEX.start), so a turret nudged by hand during INIT is still taken as forward.
+     */
+    public void zeroTurretAtStart() {
+        if (!ShooterTuning.assumeTurretForwardAtStart || encoder == null) return;
+        encoder.zeroHere();
+        ShooterTuning.turretZeroOffsetDeg = 0.0;
+        if (turretController != null) turretController.stop();
+    }
+
+    /** Applies ShotControlTuning.shooterMotorReversed to the flywheel motor (init, and live when it changes). */
+    private void applyMotorDirection() {
+        appliedReversed = ShotControlTuning.shooterMotorReversed;
+        shooterMotor.setDirection(appliedReversed ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
     }
 
     private void applyTuning() {
@@ -260,6 +281,8 @@ public class ShooterController extends SubSystem {
         double rawRpm = flywheelTicksPerSecond / Math.max(1, ShooterTuning.flywheelTicksPerRev) * 60;
         double filter = Math.max(0.01, Math.min(1, ShooterTuning.flywheelRpmFilter));
         RPM += filter * (rawRpm - RPM);
+        if (ShotControlTuning.shooterMotorReversed != appliedReversed) applyMotorDirection();
+        flywheelBackwards = flywheelPower > 0.3 && RPM < -300;
 
         if (targeting && turretDebugMode == TurretDebugMode.CLOSED_LOOP) {
             turretDebugMode = TurretDebugMode.OFF;
@@ -382,6 +405,7 @@ public class ShooterController extends SubSystem {
         p.gateRpmTolRpm = ShotControlTuning.gateRpmTolRpm;
         p.gateRpmStaticRps = ShotControlTuning.gateRpmStaticRps;
         p.gateOmegaMaxDps = ShotControlTuning.gateOmegaMaxDps;
+        p.gateAccelHoldIps2 = ShotControlTuning.gateAccelHoldIps2;
         p.gateLookEps = ShotControlTuning.gateLookEps;
         p.gateLookAhead = ShotControlTuning.gateLookAhead;
         p.gateWindowS = ShotControlTuning.gateWindowS;
