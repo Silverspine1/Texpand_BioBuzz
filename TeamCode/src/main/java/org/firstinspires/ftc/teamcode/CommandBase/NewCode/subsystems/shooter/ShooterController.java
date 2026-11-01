@@ -34,6 +34,13 @@ public class ShooterController extends SubSystem {
     Servo turretServo2;
     SetTurretAngle turretController;
 
+    Servo hoodRaw;
+    /** Last hood servo position written by the reduced path (0..1), for the displays. */
+    public double hoodServoPos = Double.NaN;
+    /** Where the turret gains came from, for the displays. */
+    public String turretTuneSource = "not set";
+    private double lastTurretCmd = Double.NaN;
+
     public MotorEx shooterMotor = new MotorEx();
     double targetRPM = 0;
     public double RPM;
@@ -99,6 +106,7 @@ public class ShooterController extends SubSystem {
         encoder = new AxonEncoder();
         encoder.init(getOpMode().hardwareMap, "turretEncoder");
         Hood.setRange(355);
+        hoodRaw = getOpMode().hardwareMap.get(Servo.class, "hoodServ");
 
         turretController = new SetTurretAngle(
                 turretServo1,
@@ -114,6 +122,7 @@ public class ShooterController extends SubSystem {
 
         ShotControlTuning.load();
         applyMotorDirection();
+        applyTurretTune();
         try {
             battery = getOpMode().hardwareMap.voltageSensor.iterator().next();
             batteryVolts = battery.getVoltage();
@@ -121,6 +130,31 @@ public class ShooterController extends SubSystem {
             battery = null;          // no ceiling from the battery (model rpm_max)
         }
         loadReducedModel();
+        if (reduced.hasModel()) ShotControlTuning.enabled = true;   // the old planner is for a different shooter
+    }
+
+    /**
+     * Turret gains: the saved turret_tune.properties if it loads, otherwise the controller fitted to this robot's own
+     * 2026-10-30 tuner log (predictive mode; the bare constructor defaults oscillate ~6 deg peak-to-peak in the rig).
+     * ShotControlTuning.turretKPos then softens the position gain.
+     */
+    private void applyTurretTune() {
+        TurretTune t = TurretTune.load();
+        if (t != null) {
+            turretTuneSource = "saved turret_tune.properties";
+        } else {
+            t = new TurretTune();
+            t.kS = 0.0284; t.kV = 0.0005; t.kA = 0.0; t.kP = 0.001; t.kVelocityFeedback = 0.0;
+            t.maxCorrection = 0.14; t.maxVelocity = 236; t.maxAcceleration = 2200; t.latency = 0.0;
+            t.brakeAware = true; t.brakeDelayScale = 1.0;
+            t.plantDelay = 0.045; t.plantAccel = 1500; t.plantDecel = 1500; t.kPos = 15; t.decelSafety = 0.8;
+            t.ffSpeed = new double[]{0, 103, 150, 228, 315};
+            t.ffPower = new double[]{0.0284, 0.0428, 0.0568, 0.0801, 0.1174};
+            turretTuneSource = "BUILT-IN fit (no valid turret_tune.properties on the hub)";
+        }
+        if (ShotControlTuning.turretKPos > 0) t.kPos = ShotControlTuning.turretKPos;
+        turretTuneSource += ", kPos " + t.kPos + (t.brakeAware ? ", predictive" : ", profile mode");
+        t.applyTo(turretController);
     }
 
     /**
@@ -316,6 +350,7 @@ public class ShooterController extends SubSystem {
         } else {
             stopFlywheel();
             turretController.stop();
+            lastTurretCmd = Double.NaN;
             solutionHold.reset();
             reduced.reset();
             reducedActive = false;
@@ -438,7 +473,13 @@ public class ShooterController extends SubSystem {
             // infeasible states still get a defined tracking command (nearest feasible node), so always apply it
             targetRPM = reduced.rpmCmd;
             if (forceRpm > 0.0) targetRPM = forceRpm;                       // ShotTuner slip-check shot (5700 rpm, hood 0)
-            turretController.setTarget(reduced.turretJavaDeg + ShooterTuning.turretZeroOffsetDeg, 1.0, false);
+            double turCmd = reduced.turretJavaDeg + ShooterTuning.turretZeroOffsetDeg;
+            boolean still = Math.hypot(inputFilter.velocityX(), inputFilter.velocityY()) * 39.37 < ShotControlTuning.turretHoldMaxSpeedIps
+                    && Math.abs(inputFilter.headingRate()) < ShotControlTuning.turretHoldMaxYawDps;
+            double step = Double.isNaN(lastTurretCmd) ? 1e9 : Math.abs(((turCmd - lastTurretCmd + 540.0) % 360.0) - 180.0);
+            if (still && step <= ShotControlTuning.turretHoldBandDeg) turCmd = lastTurretCmd;   // hold: ignore sub-band noise
+            lastTurretCmd = turCmd;
+            turretController.setTarget(turCmd, 1.0, false);
             setUnderHoodDegrees(Double.isNaN(forceHoodDeg) ? reduced.hoodDeg : forceHoodDeg);
         }
         reduced.sense(now, RPM, getTurretAimDeg(), encoder.getVelocity(), OdoMetry.getHeadingVelocityDeg());
@@ -461,8 +502,14 @@ public class ShooterController extends SubSystem {
 
     /** Under-shooter hood: travel 0..6.3 deg above the lower stop -> servo degrees (ShotControlTuning). */
     public void setUnderHoodDegrees(double hoodTravelDeg) {
-        double travel = Math.max(0.0, Math.min(6.3, hoodTravelDeg));
-        Hood.setPosition(ShotControlTuning.hoodServoAtZeroDeg + ShotControlTuning.hoodServoDegPerHoodDeg * travel);
+        hoodServoPos = underHoodServoPos(hoodTravelDeg);
+        hoodRaw.setPosition(hoodServoPos);
+    }
+
+    /** Hood travel (0..6.3 deg above the lower stop) -> servo position 0..1 (ShotControlTuning.hoodServoPosAtZero / AtMax). */
+    public static double underHoodServoPos(double hoodTravelDeg) {
+        double f = Math.max(0.0, Math.min(6.3, hoodTravelDeg)) / 6.3;
+        return ShotControlTuning.hoodServoPosAtZero + f * (ShotControlTuning.hoodServoPosAtMax - ShotControlTuning.hoodServoPosAtZero);
     }
 
     /** Fire gate of the reduced controller (R4/R5 FireGate decision FIRE; false whenever it is not the active command

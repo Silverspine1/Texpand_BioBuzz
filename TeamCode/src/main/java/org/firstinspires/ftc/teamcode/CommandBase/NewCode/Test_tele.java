@@ -9,6 +9,7 @@ import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.Axo
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ReducedShotController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.SetTurretAngle;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShotHold;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.ServoSelect;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.TurretDebugMode;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.Shotplanner;
@@ -282,8 +283,8 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("aim: vr / vt (in/s)", "%.1f / %.1f", r.result.vr, r.result.vt);
         telemetry.addData("rpm cmd / at release", "%.0f / %.0f  (wheel %.0f)  max %.0f @ %.2f V", r.rpmCmd,
                 r.result.rpmAtRelease, shooterController.RPM, r.rpmMaxEff, shooterController.batteryVolts);
-        telemetry.addData("hood cmd (deg travel)", "%.3f  servo %.2f deg", r.hoodDeg,
-                ShotControlTuning.hoodServoAtZeroDeg + ShotControlTuning.hoodServoDegPerHoodDeg * r.hoodDeg);
+        telemetry.addData("hood cmd (deg travel)", "%.3f  servo pos %.4f (0.182 bottom .. 0.218 top)", r.hoodDeg,
+                ShooterController.underHoodServoPos(r.hoodDeg));
         telemetry.addData("turret cmd / err (deg)", "%.2f / %.2f  (lead %.2f)", r.turretJavaDeg, r.lastTurretErr, r.result.turretLeadDeg);
         telemetry.addData("claimed P(make)", "%.3f  feasible %s  occ %.2f  tof %.2f s", r.pMake, r.feasible, r.result.occF, r.result.tof);
         telemetry.addData("FIRE GATE", "%s%s", ReducedShotController.GATE_TEXT[r.gateState],

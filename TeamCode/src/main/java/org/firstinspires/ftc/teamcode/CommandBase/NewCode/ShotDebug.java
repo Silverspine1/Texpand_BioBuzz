@@ -87,6 +87,11 @@ public final class ShotDebug {
     /** Flywheel: direction, power, raw ticks, rpm, target, ceiling, battery, and the checks that find a wrong direction or scale. */
     public static void flywheel(ShooterController sc, BiConsumer<String, String> out) {
         final ReducedShotController r = sc.reduced;
+        out.accept("=== COMMAND SOURCE ===", !ShotControlTuning.enabled
+                ? ">>> OLD PLANNER (reduced controller OFF): wrong shooter model, rpm will be far too low. Set ShotControlTuning.enabled = true <<<"
+                : !r.hasModel() ? ">>> NO MODEL (" + sc.reducedStatus + "): OLD PLANNER in charge. adb push the model json to /sdcard/FIRST/settings/ <<<"
+                : "REDUCED model OK, rpm / hood / turret come from it");
+        out.accept("turret gains", sc.turretTuneSource);
         out.accept("--- FLYWHEEL ---", "");
         if (sc.flywheelBackwards) {
             out.accept("!!! BACKWARDS", "power is positive but the wheel reads NEGATIVE rpm: flip ShotControlTuning.shooterMotorReversed "
@@ -105,9 +110,9 @@ public final class ShotDebug {
                 ShotControlTuning.rpmMaxNoLoadFraction, ShotControlTuning.wheelNoLoadRpmAt12V));
         if (r.hasModel()) {
             out.accept("solve rpm cmd / at release", f("%.0f / %.0f   model max %.0f", r.rpmCmd, r.result.rpmAtRelease, r.rpmMaxEff));
-            out.accept("hood cmd", f("%.2f deg of hood travel (0..6.3) -> servo %.2f deg  (%.2f + %.2f x travel; check the hood really moves)",
-                    r.hoodDeg, ShotControlTuning.hoodServoAtZeroDeg + ShotControlTuning.hoodServoDegPerHoodDeg * Math.max(0.0, Math.min(6.3, r.hoodDeg)),
-                    ShotControlTuning.hoodServoAtZeroDeg, ShotControlTuning.hoodServoDegPerHoodDeg));
+            out.accept("hood cmd", f("%.2f deg of hood travel (0..6.3) -> servo position %.4f  (%.3f bottom .. %.3f top; check the hood really moves)",
+                    r.hoodDeg, ShooterController.underHoodServoPos(r.hoodDeg),
+                    ShotControlTuning.hoodServoPosAtZero, ShotControlTuning.hoodServoPosAtMax));
         }
         out.accept("SCALE CHECK", "hold gamepad2 RIGHT TRIGGER (Shot Tuner) / Test_tele R-trigger = full power with the turret idle: no-load rpm "
                 + "should read ~5700-6000. About HALF = flywheelTicksPerRev is 2x too big (or 2 motors / a 2:1 ratio); about DOUBLE = too small.");

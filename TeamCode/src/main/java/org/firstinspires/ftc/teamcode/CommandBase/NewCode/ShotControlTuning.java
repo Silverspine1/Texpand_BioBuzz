@@ -35,7 +35,9 @@ public class ShotControlTuning {
     private static final String FILE_NAME = "shot_control.properties";
 
     /** Master switch for the new rpm / hood / turret command source. false = old behaviour, unchanged. */
-    public static boolean enabled = false;
+    // true = the reduced (under-shooter) model commands rpm / hood / turret. false = the OLD planner, which is built for a
+    // different shooter (72 mm wheel, 45-75 deg hood) and asks ~1600 rpm for a far shot. Forced true at init when a model loads.
+    public static boolean enabled = true;
     /** Alliance (the Java pose is one fixed field frame; blue is rotated 180 deg into its team frame). */
     /** Flywheel motor direction. false = FORWARD (positive power spins the wheel to shoot). The earlier hard-coded REVERSE
      *  (commit 'reverse', old shooter) ran the under-shooter wheel backwards on the first robot test (2026-11-01). Flip it
@@ -75,6 +77,18 @@ public class ShotControlTuning {
     // Hood: travel 0..6.3 deg (lower stop = 0) -> servo degrees. 48/40 gears: 1.2 servo deg per hood deg. MEASURE.
     public static double hoodServoAtZeroDeg = 0.0;
     public static double hoodServoDegPerHoodDeg = 1.2;
+    // Hood servo in plain 0..1 servo units (measured): 0.182 = bottom (hood travel 0), 0.218 = top (hood travel 6.3 deg).
+    // If the hood moves the wrong way, swap the two numbers. Written straight to the servo (no 2-degree step filter).
+    public static double hoodServoPosAtZero = 0.182;
+    public static double hoodServoPosAtMax = 0.218;
+
+    // Turret hold: while the robot is standing still the solved turret angle is only re-sent when it moves by more than this
+    // (the odometry/vision noise in the solve otherwise makes the servos chase +-0.3 deg and the turret oscillates).
+    public static double turretHoldBandDeg = 0.7;
+    public static double turretHoldMaxSpeedIps = 2.0;
+    public static double turretHoldMaxYawDps = 3.0;
+    // Turret position gain override (predictive mode kPos, 1/s). 0 = keep the saved tune's value. Lower = softer, less hunting.
+    public static double turretKPos = 8.0;
 
     // Fire gate (R4 + R5 turret rule, FireGate = fire_gate.py). Defaults = the Python constants; they were fitted in sim
     // on a built scenario set: expect the same shape, not the same numbers (docs/SHOT_ALGO_DESIGN.md 5.2).
