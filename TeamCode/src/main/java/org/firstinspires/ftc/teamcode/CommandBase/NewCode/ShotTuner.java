@@ -43,7 +43,7 @@ import java.util.Locale;
  * gamepad2 (operator): label the shot you just took
  *   A HIT   B SHORT   X LONG   LEFT BUMPER LEFT   RIGHT BUMPER RIGHT   (the row is written when you label it)
  *   D-pad up / down   rpmScale +/-     D-pad right / left   angleOffsetDeg +/-     LEFT TRIGGER + D-pad left / right   turret trim
- *   BACK   clear turret trim     Y (hold)   HOOD CHECK: hood to the TOP end (+ LEFT TRIGGER = BOTTOM end), D-pad up / down moves it
+ *   BACK   clear turret trim     Y   HOOD DEBUG on/off: D-pad up/down +-0.001, right = top, left = bottom
  *   START                    save ShotControlTuning to /sdcard/FIRST/settings/shot_control.properties
  *   left stick button        reload the model + field-tune export     right stick button   toggle useFieldTune + reload
  *                            (swap to another export: set ShotControlTuning.fieldTuneFile on the Dashboard, then reload)
@@ -71,6 +71,7 @@ public class ShotTuner extends OpModeEX {
     private String logStatus = "log not opened";
     private boolean overrideNow;
     private boolean flyTest = false, flyTestPrevTargeting = false;
+    private boolean initAllianceLatch = false;
 
     /** INIT loop: keeps odometry running so the start pose is written and shown BEFORE you press PLAY (nothing else runs). */
     @Override
@@ -78,6 +79,9 @@ public class ShotTuner extends OpModeEX {
         odometry.execute();
         telemetry.addLine("=== SHOT TUNER: INIT (not started) ===");
         telemetry.addLine("Check the pose below equals your start pose, the model is loaded, then press PLAY.");
+        if (gamepad2.right_bumper && !initAllianceLatch) ShotControlTuning.blueAlliance = !ShotControlTuning.blueAlliance;
+        initAllianceLatch = gamepad2.right_bumper;
+        put("ALLIANCE", (ShotControlTuning.blueAlliance ? "BLUE" : "RED") + "  (gamepad2 RIGHT BUMPER switches it here in INIT; START saves after PLAY)");
         ShotDebug.pose(odometry, shooterController, this::put);
         put("model", shooterController.reducedStatus);
         put("battery", f("%.2f V", shooterController.batteryVolts));
@@ -297,6 +301,7 @@ public class ShotTuner extends OpModeEX {
     }
 
     private void telemetryBlock(ReducedShotController r, double now, boolean applicable) {
+        put("HOOD", shooterController.hoodStatusLine());
         say("TUNE: " + ShotControlTuning.tuneLine());
         say(ShotControlTuning.gateProtect
                 ? "=== MOVEMENT PROTECTION: ON  (gamepad1 B turns it OFF) ==="

@@ -151,6 +151,11 @@ public class Test_tele extends OpModeEX {
         checkVelocityAgreement(encoder);
         checkHeadingDirection();
 
+        // gamepad2 RIGHT BUMPER: alliance RED / BLUE (the goal it aims at; START saves)
+        if (!lastGamepad2.right_bumper && currentGamepad2.right_bumper) ShotControlTuning.blueAlliance = !ShotControlTuning.blueAlliance;
+        telemetry.addData("HOOD", shooterController.hoodStatusLine());
+        telemetry.addData("ALLIANCE", "%s  (gamepad2 RIGHT BUMPER switches, START saves). Wrong alliance = aims at the other goal, hood stays down",
+                ShotControlTuning.blueAlliance ? "BLUE" : "RED");
         telemetry.addData("TUNE", "%s  %s", ShotControlTuning.tuneLine(), reducedSaveStatus);
         telemetry.addData("START POSE", "gamepad1 RIGHT STICK CLICK sets %.0f, %.0f cm @ %.0f deg  %s",
                 ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg, poseStatus);
