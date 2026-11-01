@@ -68,6 +68,8 @@ public class Test_tele extends OpModeEX {
         vision.enable();   // opens the camera for the vision collect button (gamepad1 START)
     }
 
+
+
     @Override
     public void loopEX() {
         Loop.reset();
@@ -213,6 +215,7 @@ public class Test_tele extends OpModeEX {
         }
         loop = Loop.milliseconds();
         telemetry.addData("loot time(ms)", "%.1f", loop);
+
 
     }
 

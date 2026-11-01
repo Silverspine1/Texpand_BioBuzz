@@ -27,7 +27,7 @@ public class ShooterController extends SubSystem {
     Odometry OdoMetry;
 
     public Shotplanner.BlueHiveSide blueHiveSide = Shotplanner.BlueHiveSide.AUDIENCE;
-    ServoDegrees Hood = new ServoDegrees();
+    public ServoDegrees Hood = new ServoDegrees();
     Servo turretServo1;
     Servo turretServo2;
     SetTurretAngle turretController;
