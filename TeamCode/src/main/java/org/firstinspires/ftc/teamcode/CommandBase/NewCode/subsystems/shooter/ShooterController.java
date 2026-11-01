@@ -2,9 +2,11 @@ package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter;
 
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.hardware.VoltageSensor;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.ShooterTuning;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.ShotControlTuning;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Localisation.Odometry;
 import org.firstinspires.ftc.teamcode.CommandBase.LoopProfiler;
 import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
@@ -52,6 +54,21 @@ public class ShooterController extends SubSystem {
     public Shotplanner.RobotState lastRobotState;
     public double plannerMs = 0;
 
+    // ---- under-shooter REDUCED shot control (ShotControlTuning.enabled; OFF = old planner path unchanged) ----
+    public final ReducedShotController reduced = new ReducedShotController();
+    public String reducedStatus = "not loaded";
+    /** True while the reduced controller is commanding rpm / hood / turret this loop. */
+    public boolean reducedActive = false;
+    /** ShotTuner only: > 0 replaces the reduced rpm command, finite replaces the hood command (the campaign's slip shot). */
+    public double forceRpm = 0.0, forceHoodDeg = Double.NaN;
+    private final ElapsedTime reducedClock = new ElapsedTime();
+    private final ElapsedTime reducedSolveTimer = new ElapsedTime();
+    private boolean reducedWasActive = false;
+    /** Battery voltage for the reduced controller's rpm ceiling (read every 0.5 s; 0 = unknown). */
+    public double batteryVolts = 0.0;
+    private VoltageSensor battery;
+    private final ElapsedTime batteryTimer = new ElapsedTime();
+
     public SetTurretAngle getTurretController() {
         return turretController;
     }
@@ -92,6 +109,45 @@ public class ShooterController extends SubSystem {
         applyTuning();
         loopTimer.reset();
         shooterMotor.setDirection(DcMotorSimple.Direction.REVERSE);
+
+        ShotControlTuning.load();
+        try {
+            battery = getOpMode().hardwareMap.voltageSensor.iterator().next();
+            batteryVolts = battery.getVoltage();
+        } catch (Throwable t) {
+            battery = null;          // no ceiling from the battery (model rpm_max)
+        }
+        loadReducedModel();
+    }
+
+    /**
+     * Loads /sdcard/FIRST/settings/{ShotControlTuning.modelFile} (default robot_model_red_audience.json; recommended
+     * robot_model_red_audience_r4.json) + the optional field-tune export. Never throws: a missing or bad file leaves
+     * the reduced controller without a model and the old planner in charge.
+     */
+    public void loadReducedModel() {
+        try {
+            String name = ShotControlTuning.modelFile == null || ShotControlTuning.modelFile.trim().isEmpty()
+                    ? ReducedShotModel.MODEL_FILE : ShotControlTuning.modelFile.trim();
+            java.io.File f = ShotControlTuning.settingsFile(name);
+            if (!f.exists()) {
+                reduced.setModel(null);
+                reducedStatus = "missing " + f.getPath();
+                return;
+            }
+            ReducedShotModel m = ReducedShotModel.load(f);
+            java.io.File ft = ShotControlTuning.settingsFile(ShotControlTuning.fieldTuneFile == null
+                    || ShotControlTuning.fieldTuneFile.trim().isEmpty()
+                    ? ReducedShotModel.FIELD_TUNE_FILE : ShotControlTuning.fieldTuneFile.trim());
+            if (ShotControlTuning.useFieldTune && ft.exists()) {
+                m.applyFieldTune(ReducedShotModel.readText(ft));
+            }
+            reduced.setModel(m);
+            reducedStatus = "loaded: " + m.describe();
+        } catch (Throwable t) {
+            reduced.setModel(null);
+            reducedStatus = "load failed: " + t.getMessage();
+        }
     }
 
     private void applyTuning() {
@@ -222,10 +278,14 @@ public class ShooterController extends SubSystem {
             stopFlywheel();
 
         } else if (targeting) {
-            if (!wasTargeting || plannerTimer.milliseconds() >= ShooterTuning.plannerPeriodMs) {
+            reducedActive = ShotControlTuning.enabled && reduced.hasModel();
+            if (reducedActive) {
+                runReducedShot();
+            } else if (!wasTargeting || plannerTimer.milliseconds() >= ShooterTuning.plannerPeriodMs) {
                 plannerTimer.reset();
                 runShotPlanner();
             }
+            reducedWasActive = reducedActive;
 
             flywheelPower = flywheel.update(targetRPM, RPM, dt);
             shooterMotor.update(flywheelPower);
@@ -234,6 +294,9 @@ public class ShooterController extends SubSystem {
             stopFlywheel();
             turretController.stop();
             solutionHold.reset();
+            reduced.reset();
+            reducedActive = false;
+            reducedWasActive = false;
         }
 
         wasTargeting = targeting && turretDebugMode == TurretDebugMode.OFF;
@@ -293,5 +356,94 @@ public class ShooterController extends SubSystem {
         } else {
             turretController.setTarget(getGoalBearingDeg() + ShooterTuning.turretZeroOffsetDeg, 1.0, false);
         }
+    }
+
+    /**
+     * REDUCED targeter path: the same turret controller (SetTurretAngle) and flywheel loop as before, with the rpm,
+     * hood and turret set-points from the velocity-compensated aim table. Solves at ShotControlTuning.solvePeriodMs
+     * (the turret's tuned command period); the fire gate is evaluated every loop.
+     */
+    private void runReducedShot() {
+        ReducedShotController.Params p = reduced.params;
+        p.blueAlliance = ShotControlTuning.blueAlliance;
+        p.pivotFromRobot = ShotControlTuning.pivotFromShooterTuning;
+        p.pivotForwardM = ShooterTuning.turretAxisForwardMeters;
+        p.pivotSidewaysM = ShooterTuning.turretAxisSidewaysMeters;
+        p.useModelTurretLead = ShotControlTuning.useModelTurretLead;
+        p.speedTrimPct = ShotControlTuning.speedTrimPct;
+        p.turretTrimDeg = ShotControlTuning.turretTrimDeg;
+        p.hoodTrimDeg = ShotControlTuning.hoodTrimDeg;
+        p.gateProtect = ShotControlTuning.gateProtect;
+        p.gateTurRelTolDeg = ShotControlTuning.gateTurRelTolDeg;
+        p.gateTurErrDeg = ShotControlTuning.gateTurErrDeg;
+        p.gateTurRateCapDps = ShotControlTuning.gateTurRateCapDps;
+        p.gateTargetGain = ShotControlTuning.gateTargetGain;
+        p.gateTReleaseS = ShotControlTuning.gateTReleaseS;
+        p.gateRpmTolRpm = ShotControlTuning.gateRpmTolRpm;
+        p.gateRpmStaticRps = ShotControlTuning.gateRpmStaticRps;
+        p.gateOmegaMaxDps = ShotControlTuning.gateOmegaMaxDps;
+        p.gateLookEps = ShotControlTuning.gateLookEps;
+        p.gateLookAhead = ShotControlTuning.gateLookAhead;
+        p.gateWindowS = ShotControlTuning.gateWindowS;
+        // battery wheel ceiling (R4): fraction x no-load x V/12; reads are slow, so every 0.5 s
+        if (battery != null && batteryTimer.seconds() > 0.5) {
+            batteryTimer.reset();
+            try {
+                batteryVolts = battery.getVoltage();
+            } catch (Throwable t) {
+                batteryVolts = 0.0;
+            }
+        }
+        p.rpmMaxCeiling = ShotControlTuning.rpmMaxFromBattery && batteryVolts > 6.0
+                ? ShotControlTuning.rpmMaxNoLoadFraction * ShotControlTuning.wheelNoLoadRpmAt12V * batteryVolts / 12.0
+                : 0.0;
+        p.detectShotsFromRpm = ShotControlTuning.detectShotsFromRpm;
+        p.detectDropFraction = ShotControlTuning.detectDropFraction;
+        p.detectMinDropRpm = ShotControlTuning.detectMinDropRpm;
+        p.burstResetS = ShotControlTuning.burstResetS;
+
+        double now = reducedClock.seconds();
+        if (!reducedWasActive || reducedSolveTimer.milliseconds() >= ShotControlTuning.solvePeriodMs) {
+            reducedSolveTimer.reset();
+            reduced.solve(now,
+                    OdoMetry.X(), OdoMetry.Y(), OdoMetry.Heading(),
+                    inputFilter.velocityX(), inputFilter.velocityY(),
+                    inputFilter.headingRate(),
+                    inputFilter.accelerationX(), inputFilter.accelerationY());
+            plannerMs = reduced.solveNanos / 1e6;
+            // infeasible states still get a defined tracking command (nearest feasible node), so always apply it
+            targetRPM = reduced.rpmCmd;
+            if (forceRpm > 0.0) targetRPM = forceRpm;                       // ShotTuner slip-check shot (5700 rpm, hood 0)
+            turretController.setTarget(reduced.turretJavaDeg + ShooterTuning.turretZeroOffsetDeg, 1.0, false);
+            setUnderHoodDegrees(Double.isNaN(forceHoodDeg) ? reduced.hoodDeg : forceHoodDeg);
+        }
+        reduced.sense(now, RPM, getTurretAimDeg(), encoder.getVelocity(), OdoMetry.getHeadingVelocityDeg());
+    }
+
+    /** Driver asks for a shot: opens the reduced fire gate's window (the deadline fires a feasible solve; see ShotHold). */
+    public void requestReducedShot() {
+        reduced.requestShot(reducedClock.seconds());
+    }
+
+    /** The feed started (a ball is on its way): burst bookkeeping of the reduced controller, ends the request window. */
+    public void notifyReducedShot() {
+        reduced.notifyShot(reducedClock.seconds());
+    }
+
+    /** Seconds on the reduced controller's clock (the same one requestReducedShot / sense use). */
+    public double reducedSeconds() {
+        return reducedClock.seconds();
+    }
+
+    /** Under-shooter hood: travel 0..6.3 deg above the lower stop -> servo degrees (ShotControlTuning). */
+    public void setUnderHoodDegrees(double hoodTravelDeg) {
+        double travel = Math.max(0.0, Math.min(6.3, hoodTravelDeg));
+        Hood.setPosition(ShotControlTuning.hoodServoAtZeroDeg + ShotControlTuning.hoodServoDegPerHoodDeg * travel);
+    }
+
+    /** Fire gate of the reduced controller (R4/R5 FireGate decision FIRE; false whenever it is not the active command
+     *  source). Nothing in this class releases a ball: {@link ShotHold} turns it into a feed permission. */
+    public boolean shotGateOpen() {
+        return reducedActive && reduced.gateOpen;
     }
 }
