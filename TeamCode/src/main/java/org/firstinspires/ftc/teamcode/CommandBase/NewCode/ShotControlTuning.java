@@ -83,10 +83,26 @@ public class ShotControlTuning {
     // Hood: travel 0..6.3 deg (lower stop = 0) -> servo degrees. 48/40 gears: 1.2 servo deg per hood deg. MEASURE.
     public static double hoodServoAtZeroDeg = 0.0;
     public static double hoodServoDegPerHoodDeg = 1.2;
-    // Hood servo in plain 0..1 servo units (measured): 0.182 = bottom (hood travel 0), 0.218 = top (hood travel 6.3 deg).
-    // If the hood moves the wrong way, swap the two numbers. Written straight to the servo (no 2-degree step filter).
-    public static double hoodServoPosAtZero = 0.182;
-    public static double hoodServoPosAtMax = 0.218;
+    // Hood servo in plain 0..1 servo units, written straight to the servo. BOTTOM = far shots (flattest, hood travel 0),
+    // TOP = near shots (steepest, travel 6.3 deg). Robot test 4: commanding 0.218 pushed the hood DOWN into its stop, so on
+    // this servo a LOWER number is higher: top 0.146 is a guess (0.182 minus the measured 0.036 span). Set it with the hood check.
+    // (Renamed from hoodServoBottom / AtMax so the old saved 0.218 is not loaded.)
+    public static double hoodServoBottom = 0.182;
+    public static double hoodServoTop = 0.146;
+    // HOOD CHECK (gamepad2, Shot Tuner and Test_tele): hold Y = hood goes to the TOP end (hoodServoTop, near shots);
+    // hold Y + LEFT TRIGGER = BOTTOM end (hoodServoBottom, far shots). While held, D-pad UP / DOWN moves the hood
+    // (that end) up / down by hoodJogStep. START saves. The model only lifts the hood inside ~54 in range (fully up inside ~33 in).
+    public static double hoodJogStep = 0.002;
+    /** Set by trimButtons every loop (not saved): 0 = off, 1 = show the BOTTOM end, 2 = show the TOP end. */
+    public static int hoodCheck = 0;
+
+    // Shooting while moving. The wheel and hood need time to reach a new command, so the rpm and hood are solved for where
+    // the robot will be mechDelayS from now (its velocity and acceleration). The turret has its own lead (SetTurretAngle). 0 = off.
+    public static double mechDelayS = 0.080;
+    // Use the robot's acceleration in the shot prediction (estimated from the filtered odometry velocity, clamped).
+    public static boolean useAcceleration = true;
+    public static double accelFilterS = 0.10;
+    public static double accelMaxIps2 = 300.0;
 
     // Turret hold: while the robot is standing still the solved turret angle is only re-sent when it moves by more than this
     // (the odometry/vision noise in the solve otherwise makes the servos chase +-0.3 deg and the turret oscillates).
@@ -190,6 +206,18 @@ public class ShotControlTuning {
      */
     public static String trimButtons(com.qualcomm.robotcore.hardware.Gamepad cur, com.qualcomm.robotcore.hardware.Gamepad last) {
         boolean turret = cur.left_trigger > 0.5;
+        if (cur.y) {                                   // hood check: the other trim buttons are off while Y is held
+            hoodCheck = turret ? 1 : 2;
+            // D-pad UP moves the hood UP (toward the top end), whichever way the servo numbers run
+            double up = hoodServoTop >= hoodServoBottom ? hoodJogStep : -hoodJogStep;
+            double step = cur.dpad_up && !last.dpad_up ? up : cur.dpad_down && !last.dpad_down ? -up : 0.0;
+            if (turret) hoodServoBottom = Math.max(0.0, Math.min(1.0, Math.round((hoodServoBottom + step) * 1000.0) / 1000.0));
+            else hoodServoTop = Math.max(0.0, Math.min(1.0, Math.round((hoodServoTop + step) * 1000.0) / 1000.0));
+            return turret
+                    ? String.format(java.util.Locale.US, "HOOD CHECK: BOTTOM end %.3f (far shots, flattest). D-pad up/down moves it, START saves", hoodServoBottom)
+                    : String.format(java.util.Locale.US, "HOOD CHECK: TOP end %.3f (near shots, steepest). D-pad up/down moves it, +LT = bottom end, START saves", hoodServoTop);
+        }
+        hoodCheck = 0;
         String s = null;
         if (cur.dpad_up && !last.dpad_up) { rpmScale = Math.round((rpmScale + rpmScaleStep) * 1000.0) / 1000.0; s = "rpmScale " + rpmScale; }
         if (cur.dpad_down && !last.dpad_down) { rpmScale = Math.max(0.3, Math.round((rpmScale - rpmScaleStep) * 1000.0) / 1000.0); s = "rpmScale " + rpmScale; }
@@ -203,6 +231,12 @@ public class ShotControlTuning {
         }
         if (cur.back && !last.back) { turretTrimDeg = 0.0; s = "turret trim reset"; }
         return s;
+    }
+
+    /** Hood ends and the check buttons, for every display. */
+    public static String hoodLine() {
+        return String.format(java.util.Locale.US, "bottom/far %.3f  top/near %.3f   (hold gp2 Y = go to TOP, Y+LT = BOTTOM; D-pad up/down moves it)",
+                hoodServoBottom, hoodServoTop);
     }
 
     /** One line with the two tuning values and the turret trim, for every display. */

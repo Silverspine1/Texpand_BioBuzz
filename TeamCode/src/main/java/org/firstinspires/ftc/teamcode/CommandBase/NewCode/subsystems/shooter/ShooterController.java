@@ -92,6 +92,7 @@ public class ShooterController extends SubSystem {
     @Override
     public void init() {
         ShooterTuning.load();
+        ShotControlTuning.hoodCheck = 0;
 
         shooterMotor.initMotor("shooterMotor", getOpMode().hardwareMap);
 
@@ -307,6 +308,11 @@ public class ShooterController extends SubSystem {
             reducedWasActive = false;
         }
 
+        if (ShotControlTuning.hoodCheck != 0) {        // gamepad2 Y held (ShotControlTuning.trimButtons): show a hood end
+            hoodServoPos = ShotControlTuning.hoodCheck == 1 ? ShotControlTuning.hoodServoBottom : ShotControlTuning.hoodServoTop;
+            hoodRaw.setPosition(hoodServoPos);
+        }
+
         lastTurretDebugMode = turretDebugMode;
 
         if (turretDebugMode != TurretDebugMode.MANUAL) {
@@ -349,6 +355,10 @@ public class ShooterController extends SubSystem {
         p.gateRpmStaticRps = ShotControlTuning.gateRpmStaticRps;
         p.gateOmegaMaxDps = ShotControlTuning.gateOmegaMaxDps;
         p.gateAccelHoldIps2 = ShotControlTuning.gateAccelHoldIps2;
+        p.mechLeadS = ShotControlTuning.mechDelayS;
+        p.estimateAccel = ShotControlTuning.useAcceleration;
+        p.accelTauS = ShotControlTuning.accelFilterS;
+        p.accelMaxIps2 = ShotControlTuning.accelMaxIps2;
         p.gateLookEps = ShotControlTuning.gateLookEps;
         p.gateLookAhead = ShotControlTuning.gateLookAhead;
         p.gateWindowS = ShotControlTuning.gateWindowS;
@@ -414,10 +424,10 @@ public class ShooterController extends SubSystem {
         hoodRaw.setPosition(hoodServoPos);
     }
 
-    /** Hood travel (0..6.3 deg above the lower stop) -> servo position 0..1 (ShotControlTuning.hoodServoPosAtZero / AtMax). */
+    /** Hood travel (0..6.3 deg above the lower stop) -> servo position 0..1 (ShotControlTuning.hoodServoBottom / AtMax). */
     public static double underHoodServoPos(double hoodTravelDeg) {
         double f = Math.max(0.0, Math.min(6.3, hoodTravelDeg)) / 6.3;
-        return ShotControlTuning.hoodServoPosAtZero + f * (ShotControlTuning.hoodServoPosAtMax - ShotControlTuning.hoodServoPosAtZero);
+        return ShotControlTuning.hoodServoBottom + f * (ShotControlTuning.hoodServoTop - ShotControlTuning.hoodServoBottom);
     }
 
     /** Fire gate of the reduced controller (R4/R5 FireGate decision FIRE; false whenever it is not the active command

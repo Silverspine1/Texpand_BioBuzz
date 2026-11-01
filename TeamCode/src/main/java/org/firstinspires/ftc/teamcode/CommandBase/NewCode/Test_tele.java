@@ -149,6 +149,9 @@ public class Test_tele extends OpModeEX {
         checkVelocityAgreement(encoder);
         checkHeadingDirection();
 
+        telemetry.addData("TUNE", "%s  %s", ShotControlTuning.tuneLine(), reducedSaveStatus);
+        telemetry.addData("START POSE", "gamepad1 RIGHT STICK CLICK sets %.0f, %.0f cm @ %.0f deg  %s",
+                ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg, poseStatus);
         telemetry.addLine("=== ODOMETRY ===");
         telemetry.addData("X / Y (cm)", "%.1f / %.1f", odometry.X(), odometry.Y());
         telemetry.addData("H (deg)", "%.1f", odometry.Heading());
@@ -241,8 +244,8 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("aim: vr / vt (in/s)", "%.1f / %.1f", r.result.vr, r.result.vt);
         telemetry.addData("rpm cmd / at release", "%.0f / %.0f  (wheel %.0f)  max %.0f @ %.2f V", r.rpmCmd,
                 r.rpmAtReleaseReal, shooterController.RPM, r.rpmMaxEff, shooterController.batteryVolts);
-        telemetry.addData("hood cmd (deg travel)", "%.3f  servo pos %.4f (0.182 bottom .. 0.218 top)", r.hoodDeg,
-                ShooterController.underHoodServoPos(r.hoodDeg));
+        telemetry.addData("hood cmd (deg travel)", "%.3f  servo pos %.4f  (%s)", r.hoodDeg, shooterController.hoodServoPos,
+                ShotControlTuning.hoodLine());
         telemetry.addData("turret cmd / err (deg)", "%.2f / %.2f  (lead %.2f)", r.turretJavaDeg, r.lastTurretErr, r.result.turretLeadDeg);
         telemetry.addData("claimed P(make)", "%.3f  feasible %s  occ %.2f  tof %.2f s", r.pMake, r.feasible, r.result.occF, r.result.tof);
         telemetry.addData("FIRE GATE", "%s%s", ReducedShotController.GATE_TEXT[r.gateState],
@@ -255,7 +258,6 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("burst: index / detected", "%d / %d", r.shotIndex, r.shotsDetected);
         telemetry.addData("solve / look-ahead / gate (us)", "%.1f / %.1f / %.1f  max %.1f", r.solveNanos / 1e3,
                 r.lookNanos / 1e3, r.gateNanos / 1e3, r.maxSolveNanos / 1e3);
-        telemetry.addData("TUNE", "%s  %s", ShotControlTuning.tuneLine(), reducedSaveStatus);
     }
 
     private void turretDebugControls() {
@@ -290,7 +292,7 @@ public class Test_tele extends OpModeEX {
 
         if (!lastGamepad1.right_stick_button && currentGamepad1.right_stick_button) {
             odometry.setPose(ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg);
-            poseStatus = "set";
+            poseStatus = "POSE SET";
         }
 
         if (!lastGamepad1.b && currentGamepad1.b) {

@@ -35,6 +35,15 @@ public final class ReducedShotController {
         /** Battery-limited wheel ceiling [rpm] (R4: ~0.98 x no-load rpm x V/12); <= 0 = the model's rpm_max.
          *  The solve clamps to min(model rpm_max, this): a state that needs more becomes infeasible, claim 0. */
         public double rpmMaxCeiling = 0.0;
+        /** Mechanism delay [s]: the rpm and hood commands are solved for the state this far ahead (constant acceleration and
+         *  turn rate), so the wheel and hood are there when the robot is. The turret keeps its own lead (SetTurretAngle).
+         *  0 = Python parity. */
+        public double mechLeadS = 0.0;
+        /** true: predict with this controller's acceleration estimate (low-passed change of the filtered velocity between
+         *  solves, clamped to accelMaxIps2) instead of the acceleration passed to solve(). false = Python parity. */
+        public boolean estimateAccel = false;
+        public double accelTauS = 0.10;
+        public double accelMaxIps2 = 300.0;
         // fire gate (FireGate; defaults = fire_gate.py constants)
         /** Movement protection (the settle gate) ON; false = fire whenever the solve is feasible. Default ON. */
         public boolean gateProtect = true;
@@ -78,6 +87,8 @@ public final class ReducedShotController {
     /** Look-ahead claims at FireGate.HORIZONS_S (0 when infeasible), from the last solve. */
     public final double[] pAhead = new double[FireGate.HORIZONS_S.length];
     private final ReducedTargeter.Result ahead = new ReducedTargeter.Result();
+    /** Solve at the state mechLeadS ahead (rpm and hood commands come from it when mechLeadS > 0). */
+    public final ReducedTargeter.Result lead = new ReducedTargeter.Result();
     private final ShotFrame frame = new ShotFrame();
     private final double[] piv = new double[2];
     private ReducedTargeter targeter;
@@ -101,6 +112,9 @@ public final class ReducedShotController {
     public double rpmMaxEff;
     /** Real wheel rpm the model expects at release (result.rpmAtRelease x rpmScale) and the rpmScale of the last solve. */
     public double rpmAtReleaseReal, rpmScaleUsed = 1.0;
+    /** Model rpm of the command (before rpmScale) and the team-frame acceleration used by the last solve [in/s^2]. */
+    public double rpmModelCmd, accelX, accelY;
+    private double accSolvePrevS = Double.NaN, accSolvePrevVx, accSolvePrevVy, estAx, estAy;
     public long solveNanos, maxSolveNanos, lookNanos, gateNanos;
     public double teamX, teamY, teamHeading, teamVx, teamVy;
 
@@ -174,6 +188,7 @@ public final class ReducedShotController {
         resetBurst();
         requestActive = false;
         prevSolveS = Double.NaN;
+        accSolvePrevS = Double.NaN;
         turCmdRate = 0.0;
         rpmCmdRate = 0.0;
     }
@@ -336,25 +351,54 @@ public final class ReducedShotController {
         teamHeading = frame.headingDeg;
         teamVx = frame.vx;
         teamVy = frame.vy;
+        double ax = frame.ax, ay = frame.ay;
+        if (P.estimateAccel) {
+            double dtA = nowS - accSolvePrevS;
+            if (Double.isNaN(accSolvePrevS) || !(dtA > 1e-6) || dtA > CMD_RATE_MAX_GAP_S) {
+                estAx = estAy = 0.0;
+            } else {
+                double k = 1.0 - Math.exp(-dtA / Math.max(1e-3, P.accelTauS));
+                estAx += k * ((frame.vx - accSolvePrevVx) / dtA - estAx);
+                estAy += k * ((frame.vy - accSolvePrevVy) / dtA - estAy);
+            }
+            accSolvePrevS = nowS;
+            accSolvePrevVx = frame.vx;
+            accSolvePrevVy = frame.vy;
+            double mag = Math.hypot(estAx, estAy);
+            double c = P.accelMaxIps2 > 0.0 && mag > P.accelMaxIps2 ? P.accelMaxIps2 / mag : 1.0;
+            ax = estAx * c;
+            ay = estAy * c;
+        }
+        accelX = ax;
+        accelY = ay;
         targeter.speedTrimPct = P.speedTrimPct;
         long t0 = System.nanoTime();
         targeter.solve(frame.x, frame.y, frame.headingDeg, frame.vx, frame.vy, frame.omegaDps,
-                frame.ax, frame.ay, shotIndex, spacing, result);
+                ax, ay, shotIndex, spacing, result);
+        ReducedTargeter.Result cmd = result;
+        double L = P.mechLeadS;
+        if (L > 0.0) {
+            targeter.solve(frame.x + frame.vx * L + 0.5 * ax * L * L, frame.y + frame.vy * L + 0.5 * ay * L * L,
+                    frame.headingDeg + frame.omegaDps * L, frame.vx + ax * L, frame.vy + ay * L, frame.omegaDps,
+                    ax, ay, shotIndex, spacing > 0.0 ? spacing + L : 0.0, lead);
+            cmd = lead;
+        }
         long t1 = System.nanoTime();
         solveNanos = t1 - t0;
         // fire-gate look-ahead: the same solve at the pose propagated by each horizon (team frame)
         if (P.gateLookAhead) {
             lookAhead(targeter, ahead, frame.x, frame.y, frame.headingDeg, frame.vx, frame.vy, frame.omegaDps,
-                    frame.ax, frame.ay, shotIndex, spacing, pAhead);
+                    ax, ay, shotIndex, spacing, pAhead);
         } else {
             for (int j = 0; j < pAhead.length; j++) pAhead[j] = 0.0;
         }
         lookNanos = System.nanoTime() - t1;
         if (solveNanos + lookNanos > maxSolveNanos) maxSolveNanos = solveNanos + lookNanos;
 
-        rpmCmd = result.rpmCmd * s;
-        rpmAtReleaseReal = result.rpmAtRelease * s;
-        hoodDeg = Math.min(Math.max(result.hoodDeg + P.hoodTrimDeg, m.shotHood[0]), m.shotHood[m.nH - 1]);
+        rpmModelCmd = cmd.rpmCmd;
+        rpmCmd = cmd.rpmCmd * s;
+        rpmAtReleaseReal = cmd.rpmAtRelease * s;
+        hoodDeg = Math.min(Math.max(cmd.hoodDeg + P.hoodTrimDeg, m.shotHood[0]), m.shotHood[m.nH - 1]);
         turretTeamDeg = result.turretDeg - (P.useModelTurretLead ? 0.0 : result.turretLeadDeg);
         turretJavaDeg = ShotFrame.turretTeamToJava(turretTeamDeg) + P.turretTrimDeg;
         pMake = result.pMake;
