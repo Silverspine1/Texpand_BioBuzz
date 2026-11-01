@@ -22,11 +22,11 @@ import java.util.Properties;
  * <p>Model: {@link #modelFile} is BUILT INTO the app (TeamCode/src/main/assets/); a file of the same name pushed to
  * {@code /sdcard/FIRST/settings/} overrides it and {@code /sdcard/FIRST/settings/under_shooter_field_tune.json}
  * (optional field-tune export; replaces the shot model). RECOMMENDED model: the R4 export
- * {@code robot_model_red_audience_r4.json} (aim table with P(stay in cell), bearing calibration in occ.f):
+ * {@code robot_model_red_audience_r4h.json} (aim table with P(stay in cell), bearing calibration in occ.f):
  * <pre>
- * adb push outputs/shotcontrol/algos/robot_model_red_audience_r4.json /sdcard/FIRST/settings/
+ * adb push outputs/shotcontrol/algos/robot_model_red_audience_r4h.json /sdcard/FIRST/settings/
  * </pre>
- * then set {@link #modelFile} to {@code robot_model_red_audience_r4.json} (dashboard), save (gamepad2 START) and reload
+ * then set {@link #modelFile} to {@code robot_model_red_audience_r4h.json} (dashboard), save (gamepad2 START) and reload
  * (gamepad2 X), or push it under the default name.
  */
 @Config
@@ -44,8 +44,8 @@ public class ShotControlTuning {
     /** Use the optional field-tune export next to the model when it exists. */
     public static boolean useFieldTune = true;
     /** Model file name in /sdcard/FIRST/settings/ (blank = ReducedShotModel.MODEL_FILE). Recommended:
-     *  robot_model_red_audience_r4.json. */
-    public static String modelFile = "robot_model_red_audience_r4.json";
+     *  robot_model_red_audience_r4h.json. */
+    public static String modelFile = "robot_model_red_audience_r4h.json";
     /** Field-tune export in /sdcard/FIRST/settings/ applied over the model's shot block (ShotTuner: gamepad2 right stick
      *  button toggles useFieldTune; change the name here to swap exports, then gamepad2 left stick button reloads). */
     public static String fieldTuneFile = "under_shooter_field_tune.json";
