@@ -42,7 +42,8 @@ import java.util.Locale;
  *   D-pad up                 targeting on / off          right stick button   set the start pose (ShooterTuning)
  * gamepad2 (operator): label the shot you just took
  *   A HIT   B SHORT   X LONG   LEFT BUMPER LEFT   RIGHT BUMPER RIGHT   (the row is written when you label it)
- *   D-pad up / down   exit-speed trim +/-     D-pad right / left   turret trim +/-     BACK   clear trims
+ *   D-pad up / down   rpmScale +/-     D-pad right / left   angleOffsetDeg +/-     LEFT TRIGGER + D-pad left / right   turret trim
+ *   BACK   clear turret trim     Y (hold)   HOOD CHECK: hood to the TOP end (+ LEFT TRIGGER = BOTTOM end), D-pad up / down moves it
  *   START                    save ShotControlTuning to /sdcard/FIRST/settings/shot_control.properties
  *   left stick button        reload the model + field-tune export     right stick button   toggle useFieldTune + reload
  *                            (swap to another export: set ShotControlTuning.fieldTuneFile on the Dashboard, then reload)
