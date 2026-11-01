@@ -51,6 +51,7 @@ public class ShooterController extends SubSystem {
     /** Direction applied to the flywheel motor, and: power > 0.3 but the measured rpm negative (wrong motor direction or encoder sign). */
     public boolean appliedReversed = false, flywheelBackwards = false;
     public boolean targeting = false;
+    private boolean ranTargeting;
 
     public enum TurretDebugMode { OFF, MANUAL, CLOSED_LOOP }
     public enum ServoSelect { BOTH, SERVO1_ONLY, SERVO2_ONLY }
@@ -95,7 +96,7 @@ public class ShooterController extends SubSystem {
     @Override
     public void init() {
         ShooterTuning.load();
-        ShotControlTuning.hoodCheck = 0;
+        ShotControlTuning.hoodDebug = false;
 
         shooterMotor.initMotor("shooterMotor", getOpMode().hardwareMap);
 
@@ -159,6 +160,20 @@ public class ShooterController extends SubSystem {
      * there (override), otherwise the copy BUILT INTO the app (TeamCode/src/main/assets/), so a fresh hub works without adb.
      * Then the optional field-tune export. Never throws: a bad file leaves no model (flywheel off, status says why).
      */
+    /** The model file bundled in TeamCode/src/main/assets/ (fallback when ShotControlTuning.modelFile is not found). */
+    public static final String BUILT_IN_MODEL = "robot_model_red_audience_r4.json";
+
+    /** One short line for the top of every display: model, targeting, range, hood command and the servo position written. */
+    public String hoodStatusLine() {
+        String check = ShotControlTuning.hoodDebug ? "  [HOOD DEBUG: servo set by hand, gamepad2 Y = off]" : "";
+        if (!reduced.hasModel()) {
+            return String.format(java.util.Locale.US, "NO MODEL (%s) -> hood held at bottom, servo %.3f%s", reducedStatus, hoodServoPos, check);
+        }
+        return String.format(java.util.Locale.US, "%s alliance | range %.0f in -> hood %.1f of 6.3 deg -> servo %.3f (bottom %.3f, top %.3f)  targeting %s%s",
+                ShotControlTuning.blueAlliance ? "BLUE" : "RED", reduced.result.d, hoodTargetDeg, hoodServoPos,
+                ShotControlTuning.hoodBottomPos, ShotControlTuning.hoodTopPos, targeting ? "ON" : "OFF", check);
+    }
+
     public void loadReducedModel() {
         try {
             String name = ShotControlTuning.modelFile == null || ShotControlTuning.modelFile.trim().isEmpty()
@@ -174,9 +189,14 @@ public class ShooterController extends SubSystem {
                 try {
                     in = getOpMode().hardwareMap.appContext.getAssets().open(name);
                 } catch (java.io.IOException e) {
-                    reduced.setModel(null);
-                    reducedStatus = "missing: " + name + " is neither in " + f.getParent() + " nor built into the app";
-                    return;
+                    try {                       // e.g. an old file name restored from shot_control.properties
+                        in = getOpMode().hardwareMap.appContext.getAssets().open(BUILT_IN_MODEL);
+                        name = BUILT_IN_MODEL + " (" + ShotControlTuning.modelFile + " not found)";
+                    } catch (java.io.IOException e2) {
+                        reduced.setModel(null);
+                        reducedStatus = "missing: " + name + " is neither in " + f.getParent() + " nor built into the app";
+                        return;
+                    }
                 }
                 try {
                     m = ReducedShotModel.fromJson(ReducedShotModel.readText(in));
@@ -249,6 +269,7 @@ public class ShooterController extends SubSystem {
     @Override
     public void execute() {
         long start = System.nanoTime();
+        ranTargeting = false;
         applyTuning();
         encoder.UpdatePosition();
 
@@ -290,6 +311,7 @@ public class ShooterController extends SubSystem {
             stopFlywheel();
 
         } else if (targeting) {
+            ranTargeting = true;
             reducedActive = reduced.hasModel();
             if (reducedActive) {
                 runReducedShot();
@@ -309,14 +331,16 @@ public class ShooterController extends SubSystem {
             reduced.reset();
             reducedActive = false;
             reducedWasActive = false;
-            trackHood();
         }
 
-        // the hood servo, every loop: gamepad2 Y held (ShotControlTuning.trimButtons) shows an end, otherwise hoodTargetDeg
-        if (ShotControlTuning.hoodCheck == 1) hoodServoPos = ShotControlTuning.hoodServoBottom;
-        else if (ShotControlTuning.hoodCheck == 2) hoodServoPos = ShotControlTuning.hoodServoTop;
-        else hoodServoPos = underHoodServoPos(hoodTargetDeg);
-        hoodRaw.setPosition(hoodServoPos);
+        // ---- HOOD: hoodTargetDeg (from the shot solve) -> servo position -> servo, EVERY loop, in every mode ----
+        if (!ranTargeting) trackHood();                // targeting off / turret test modes: the hood still follows the range
+        double pos = underHoodServoPos(hoodTargetDeg);
+        if (ShotControlTuning.hoodDebug) pos = ShotControlTuning.hoodDebugPos;          // gamepad2 Y: HOOD DEBUG (trimButtons)
+        if (!Double.isNaN(pos)) {                       // NaN pose -> NaN solve: keep the last position
+            hoodServoPos = pos;
+            hoodRaw.setPosition(pos);
+        }
 
         lastTurretDebugMode = turretDebugMode;
 
@@ -439,10 +463,10 @@ public class ShooterController extends SubSystem {
         return reducedClock.seconds();
     }
 
-    /** Hood travel (0..6.3 deg above the lower stop) -> servo position 0..1 (ShotControlTuning.hoodServoBottom / hoodServoTop). */
+    /** Hood travel (0..6.3 deg above the lower stop) -> servo position 0..1 (ShotControlTuning.hoodBottomPos / hoodTopPos). */
     public static double underHoodServoPos(double hoodTravelDeg) {
         double f = Math.max(0.0, Math.min(6.3, hoodTravelDeg)) / 6.3;
-        return ShotControlTuning.hoodServoBottom + f * (ShotControlTuning.hoodServoTop - ShotControlTuning.hoodServoBottom);
+        return ShotControlTuning.hoodBottomPos + f * (ShotControlTuning.hoodTopPos - ShotControlTuning.hoodBottomPos);
     }
 
     /** Fire gate of the reduced controller (R4/R5 FireGate decision FIRE; false whenever it is not the active command

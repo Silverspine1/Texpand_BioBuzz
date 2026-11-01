@@ -115,7 +115,7 @@ public final class ShotDebug {
             out.accept("exit angle wanted (model) / offset", f("%.1f deg / %+.1f deg  (hood %.2f of 0..6.3)", r.result.angle,
                     ShotControlTuning.angleOffsetDeg, r.hoodDeg));
             out.accept("hood cmd", f("%.2f of 6.3 deg travel at range %.0f in -> servo %.4f%s  (rises inside ~54 in, fully up inside ~33 in)",
-                    r.hoodDeg, r.result.d, sc.hoodServoPos, ShotControlTuning.hoodCheck != 0 ? "  HOOD CHECK" : ""));
+                    r.hoodDeg, r.result.d, sc.hoodServoPos, ShotControlTuning.hoodDebug ? "  HOOD DEBUG" : ""));
             out.accept("hood ends", ShotControlTuning.hoodLine());
         }
         out.accept("SCALE CHECK", "hold gamepad2 RIGHT TRIGGER (Shot Tuner) / Test_tele R-trigger = full power with the turret idle: no-load rpm "
