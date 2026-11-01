@@ -87,10 +87,9 @@ public final class ShotDebug {
     /** Flywheel: direction, power, raw ticks, rpm, target, ceiling, battery, and the checks that find a wrong direction or scale. */
     public static void flywheel(ShooterController sc, BiConsumer<String, String> out) {
         final ReducedShotController r = sc.reduced;
-        out.accept("=== COMMAND SOURCE ===", !ShotControlTuning.enabled
-                ? ">>> OLD PLANNER (reduced controller OFF): wrong shooter model, rpm will be far too low. Set ShotControlTuning.enabled = true <<<"
-                : !r.hasModel() ? ">>> NO MODEL (" + sc.reducedStatus + "): OLD PLANNER in charge. adb push the model json to /sdcard/FIRST/settings/ <<<"
-                : "REDUCED model OK, rpm / hood / turret come from it");
+        out.accept("=== MODEL ===", !r.hasModel()
+                ? ">>> NO MODEL: " + sc.reducedStatus + "  -> flywheel OFF, turret not driven <<<"
+                : "OK, rpm / hood / turret come from it: " + sc.reducedStatus);
         out.accept("turret gains", sc.turretTuneSource);
         out.accept("--- FLYWHEEL ---", "");
         if (sc.flywheelBackwards) {

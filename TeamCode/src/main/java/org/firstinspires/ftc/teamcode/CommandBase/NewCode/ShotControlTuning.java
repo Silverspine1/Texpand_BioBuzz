@@ -16,11 +16,11 @@ import java.util.Properties;
 
 /**
  * Under-shooter shot control (REDUCED targeter, docs/SHOT_ALGO_DESIGN.md sections 7 and 11 in the sim repo).
- * OFF by default: with {@link #enabled} false the shooter runs exactly the old Shotplanner path.
+ * The only shot command source (the old Shotplanner is deleted).
  * Edit live in FTC Dashboard; gamepad2 START in Test_tele saves to {@code /sdcard/FIRST/settings/shot_control.properties}.
  *
- * <p>Model files (copy with adb, see {@code ReducedShotModel}): {@code /sdcard/FIRST/settings/<modelFile>} (required;
- * default {@code robot_model_red_audience.json}) and {@code /sdcard/FIRST/settings/under_shooter_field_tune.json}
+ * <p>Model: {@link #modelFile} is BUILT INTO the app (TeamCode/src/main/assets/); a file of the same name pushed to
+ * {@code /sdcard/FIRST/settings/} overrides it and {@code /sdcard/FIRST/settings/under_shooter_field_tune.json}
  * (optional field-tune export; replaces the shot model). RECOMMENDED model: the R4 export
  * {@code robot_model_red_audience_r4.json} (aim table with P(stay in cell), bearing calibration in occ.f):
  * <pre>
@@ -35,9 +35,6 @@ public class ShotControlTuning {
     private static final String FILE_NAME = "shot_control.properties";
 
     /** Master switch for the new rpm / hood / turret command source. false = old behaviour, unchanged. */
-    // true = the reduced (under-shooter) model commands rpm / hood / turret. false = the OLD planner, which is built for a
-    // different shooter (72 mm wheel, 45-75 deg hood) and asks ~1600 rpm for a far shot. Forced true at init when a model loads.
-    public static boolean enabled = true;
     /** Alliance (the Java pose is one fixed field frame; blue is rotated 180 deg into its team frame). */
     /** Flywheel motor direction. false = FORWARD (positive power spins the wheel to shoot). The earlier hard-coded REVERSE
      *  (commit 'reverse', old shooter) ran the under-shooter wheel backwards on the first robot test (2026-11-01). Flip it
