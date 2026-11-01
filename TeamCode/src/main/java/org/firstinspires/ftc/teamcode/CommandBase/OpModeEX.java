@@ -77,6 +77,7 @@ public abstract class OpModeEX extends OpMode {
 
     @Override
     public void start() {
+        shooterController.zeroTurretAtStart();   // the turret is assumed to point exactly forward at PLAY
         autoTime.reset();
         super.start();
     }

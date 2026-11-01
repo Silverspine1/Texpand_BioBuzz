@@ -110,6 +110,7 @@ public class ShooterController extends SubSystem {
 
         applyTuning();
         loopTimer.reset();
+        zeroTurretAtStart();
 
         ShotControlTuning.load();
         applyMotorDirection();
@@ -150,6 +151,18 @@ public class ShooterController extends SubSystem {
             reduced.setModel(null);
             reducedStatus = "load failed: " + t.getMessage();
         }
+    }
+
+    /**
+     * The turret is ASSUMED to point exactly straight forward when the program starts (ShooterTuning.assumeTurretForwardAtStart,
+     * default true): zero the encoder where it is and ignore any saved turretZeroOffsetDeg. Called at init() and again at PLAY
+     * (OpModeEX.start), so a turret nudged by hand during INIT is still taken as forward.
+     */
+    public void zeroTurretAtStart() {
+        if (!ShooterTuning.assumeTurretForwardAtStart || encoder == null) return;
+        encoder.zeroHere();
+        ShooterTuning.turretZeroOffsetDeg = 0.0;
+        if (turretController != null) turretController.stop();
     }
 
     /** Applies ShotControlTuning.shooterMotorReversed to the flywheel motor (init, and live when it changes). */

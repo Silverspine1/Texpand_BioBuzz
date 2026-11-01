@@ -78,6 +78,19 @@ public class AxonEncoder implements SetTurretAngle.Sensor {
     public void resetTurretAngle(){
         totalPosition = 0;
     }
+
+    /**
+     * Declares the turret's CURRENT position to be exactly straight forward (angle 0): zeroes the angle AND re-syncs the
+     * last reading, so nothing the turret moved since init() is counted, and clears the velocity estimate.
+     */
+    public void zeroHere() {
+        previousAngle = getPosition();
+        totalPosition = 0;
+        difference = 0;
+        degreesPerSecond = 0;
+        spikeSamples = 0;
+        veloTimer.reset();
+    }
     private double toTurretDegrees(double servoDegrees) {
         return TURRET_DIRECTION * servoDegrees / gearRatio;
     }

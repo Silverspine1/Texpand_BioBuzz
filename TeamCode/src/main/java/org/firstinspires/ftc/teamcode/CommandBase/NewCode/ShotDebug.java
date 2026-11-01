@@ -47,6 +47,9 @@ public final class ShotDebug {
         out.accept("alliance / frame", f("%s   JAVA_FRAME_IS_FIXED_RED=%s  LATERAL_SIGN=%d  (ShotFrame)",
                 blue ? "BLUE" : "RED", ShotFrame.JAVA_FRAME_IS_FIXED_RED, ShotFrame.LATERAL_SIGN));
         FRAME.toTeam(blue, x, y, h, 0, 0, 0, 0, 0);
+        out.accept("turret zero", ShooterTuning.assumeTurretForwardAtStart
+                ? "ASSUMED straight forward at start (zeroed at INIT and at PLAY; ShooterTuning.assumeTurretForwardAtStart)"
+                : f("saved offset %.1f deg (assumeTurretForwardAtStart is OFF)", ShooterTuning.turretZeroOffsetDeg));
         out.accept("team-frame pose (what the targeter uses)", f("x %.1f in  y %.1f in  heading %.1f deg", FRAME.x, FRAME.y, FRAME.headingDeg));
 
         ReducedShotModel m = sc.reduced.model();

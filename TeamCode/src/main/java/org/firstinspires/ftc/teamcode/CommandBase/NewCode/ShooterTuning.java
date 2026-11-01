@@ -38,7 +38,10 @@ public class ShooterTuning {
     public static double turretAxisForwardMeters = 0.1;
     // Sideways offset of the turret axis from the odometry point. Positive is toward the side heading increases toward.
     public static double turretAxisSidewaysMeters = 0.0;
-    // Turret encoder reading when the turret really points straight ahead
+    // true = the program ASSUMES the turret points exactly straight forward when it starts (INIT and again at PLAY): the encoder
+    // is zeroed there and turretZeroOffsetDeg is forced to 0. false = use turretZeroOffsetDeg as a saved calibration.
+    public static boolean assumeTurretForwardAtStart = true;
+    // Turret encoder reading when the turret really points straight ahead (only used when assumeTurretForwardAtStart is false)
     public static double turretZeroOffsetDeg = 0.0;
     public static double muzzleForwardFromTurretMeters = 0.05;
     public static double plannerDelaySeconds = 0.10;
