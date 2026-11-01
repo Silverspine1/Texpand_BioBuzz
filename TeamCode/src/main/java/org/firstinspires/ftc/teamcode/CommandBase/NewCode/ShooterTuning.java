@@ -34,13 +34,13 @@ public class ShooterTuning {
     public static double magnusK = 0.0;
     public static double maxFlywheelRPM = 6000;
     public static double requiredClearanceMeters = 0.025;
-    public static double muzzleHeightMeters = 0.2;
-    public static double turretAxisForwardMeters = 0.1;
+    public static double muzzleHeightMeters = 0.32;
+    public static double turretAxisForwardMeters = 0;
     // Sideways offset of the turret axis from the odometry point. Positive is toward the side heading increases toward.
     public static double turretAxisSidewaysMeters = 0.0;
     // Turret encoder reading when the turret really points straight ahead
     public static double turretZeroOffsetDeg = 0.0;
-    public static double muzzleForwardFromTurretMeters = 0.05;
+    public static double muzzleForwardFromTurretMeters = 0.0;
     public static double plannerDelaySeconds = 0.10;
     public static double plannerPeriodMs = 50;
 
@@ -80,8 +80,8 @@ public class ShooterTuning {
     public static double flywheelReadyPercent = 3.0;
 
     // Start pose used by Test_tele at init and by its set-pose button (cm, degrees)
-    public static double startXcm = 0;
-    public static double startYcm = 0;
+    public static double startXcm = 21;
+    public static double startYcm = 348;
     public static double startHeadingDeg = 0;
 
     // Dashboard field view

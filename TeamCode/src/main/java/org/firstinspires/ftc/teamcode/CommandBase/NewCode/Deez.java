@@ -172,7 +172,7 @@ public class Deez extends OpMode {
             hood += 0.001;
         }
         if (gamepad1.bWasPressed()){
-            hood -= 0.00 1;
+            hood -= 0.001;
         }
         Hood.setPosition(hood);
 
