@@ -28,12 +28,12 @@ public class SetTurretAngle {
     private double maxVelocity = 180;
     private double maxAcceleration = 1000;
 
-    private double kP = 0.004;
     private double kVelocityFeedback = 0.0;
 
-    private double kS = 0.0;
-    private double kV = 0.0020;
-    private double kA = 0.0;
+    public static double kS = 0.0192;
+    public static double kV = 0.0004;
+    public static double kA = 0.000008;
+    public static double kP = 0.0036;
 
     private double neutralPosition = 0.5;
     private double maxCorrection = 0.4;
