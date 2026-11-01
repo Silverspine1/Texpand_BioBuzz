@@ -6,7 +6,9 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingUtility.RobotPower;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware_doubleBot;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.AxonEncoder;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ReducedShotController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.SetTurretAngle;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShotHold;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.ServoSelect;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.TurretDebugMode;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.Shotplanner;
@@ -31,6 +33,7 @@ public class Test_tele extends OpModeEX {
     private int velTotal = 0;
 
     private final TargetingDebugView fieldView = new TargetingDebugView();
+    private final ShotHold shotHold = new ShotHold();
     private final ElapsedTime packetTimer = new ElapsedTime();
     private String voltageVerdict = "-";
 
@@ -96,12 +99,21 @@ public class Test_tele extends OpModeEX {
         } else {
         driveBase.drivePowers(gamepad1.right_stick_y,-gamepad1.right_stick_x,(gamepad1.left_trigger- gamepad1.right_trigger));
         IntakeHardware.Vertical = driveBase.vertical;
+        // FEED = gamepad1 left bumper. With the reduced controller active the fire gate HOLDS it until FireGate says FIRE
+        // (ShotControlTuning.gateHoldsFire; gamepad2 B = override, gamepad2 left bumper = movement protection ON/OFF).
+        // Not applicable (controller off, no model, hold disabled) = the old behaviour: the bumper feeds directly.
+        boolean feedApplicable = ShotControlTuning.gateHoldsFire && shooterController.reducedActive
+                && shooterController.reduced.hasModel();
+        boolean feedNow = shotHold.update(shooterController.reducedSeconds(), gamepad1.left_bumper, gamepad2.b,
+                feedApplicable, shooterController.reduced.gateState);
+        if (shotHold.consumeRequestOpened()) shooterController.requestReducedShot();
+        if (shotHold.feedStarted) shooterController.notifyReducedShot();
         if (gamepad1.right_bumper){
             IntakeHardware.State = intakeHardware_doubleBot.intakeState.intaking;
-        }else if(!gamepad1.left_bumper) {
+        }else if(!feedNow) {
             IntakeHardware.State = intakeHardware_doubleBot.intakeState.off;
         }
-        if (gamepad1.left_bumper){
+        if (feedNow){
             IntakeHardware.State = intakeHardware_doubleBot.intakeState.transfering;
         }else if (!gamepad1.right_bumper){
             IntakeHardware.State = intakeHardware_doubleBot.intakeState.off;
@@ -213,10 +225,77 @@ public class Test_tele extends OpModeEX {
             telemetry.addData("planner in: heading / omega", "%.1f deg / %.3f deg/s", rs.headingDeg, rs.angularVelocityDegPerSec);
             telemetry.addData("planner in: turret omega", flagNaN(rs.turretAngularVelocityDegPerSec));
         }
+        reducedShotControls();
+        reducedShotTelemetry();
         loop = Loop.milliseconds();
         telemetry.addData("loot time(ms)", "%.1f", loop);
 
 
+    }
+
+    /**
+     * Under-shooter REDUCED shot control (ShotControlTuning, OFF by default), gamepad2:
+     * Y toggles it, dpad up/down = exit-speed trim +-, dpad left/right = turret trim -/+, BACK clears the trims,
+     * X reloads the model files, START saves ShotControlTuning (not 'enabled': it always starts OFF),
+     * A opens a fire-gate request window (gateWindowS), LEFT BUMPER toggles MOVEMENT PROTECTION (settle gate) ON/OFF
+     * (default ON; always starts ON), B (hold) = feed override. gamepad1 LEFT BUMPER feeds: held until the gate says FIRE.
+     */
+    private void reducedShotControls() {
+        if (!lastGamepad2.y && currentGamepad2.y) {
+            ShotControlTuning.enabled = !ShotControlTuning.enabled;
+            if (ShotControlTuning.enabled && !shooterController.reduced.hasModel()) shooterController.loadReducedModel();
+        }
+        if (!lastGamepad2.dpad_up && currentGamepad2.dpad_up) ShotControlTuning.speedTrimPct += ShotControlTuning.speedTrimStepPct;
+        if (!lastGamepad2.dpad_down && currentGamepad2.dpad_down) ShotControlTuning.speedTrimPct -= ShotControlTuning.speedTrimStepPct;
+        if (!lastGamepad2.dpad_right && currentGamepad2.dpad_right) ShotControlTuning.turretTrimDeg += ShotControlTuning.turretTrimStepDeg;
+        if (!lastGamepad2.dpad_left && currentGamepad2.dpad_left) ShotControlTuning.turretTrimDeg -= ShotControlTuning.turretTrimStepDeg;
+        if (!lastGamepad2.back && currentGamepad2.back) {
+            ShotControlTuning.speedTrimPct = 0;
+            ShotControlTuning.turretTrimDeg = 0;
+            ShotControlTuning.hoodTrimDeg = 0;
+        }
+        if (!lastGamepad2.x && currentGamepad2.x) shooterController.loadReducedModel();
+        if (!lastGamepad2.a && currentGamepad2.a) shooterController.requestReducedShot();
+        if (!lastGamepad2.left_bumper && currentGamepad2.left_bumper) ShotControlTuning.gateProtect = !ShotControlTuning.gateProtect;
+        if (!lastGamepad2.start && currentGamepad2.start) {
+            try {
+                ShotControlTuning.save();
+                reducedSaveStatus = "saved";
+            } catch (Exception e) {
+                reducedSaveStatus = "save failed: " + e.getMessage();
+            }
+        }
+    }
+
+    private String reducedSaveStatus = "";
+
+    private void reducedShotTelemetry() {
+        ReducedShotController r = shooterController.reduced;
+        telemetry.addLine("=== REDUCED SHOT CONTROL (gamepad2 Y) ===");
+        telemetry.addData("enabled / active", "%s / %s  (%s alliance)", ShotControlTuning.enabled,
+                shooterController.reducedActive, ShotControlTuning.blueAlliance ? "BLUE" : "RED");
+        telemetry.addData("model", shooterController.reducedStatus);
+        if (!r.hasModel()) return;
+        telemetry.addData("aim: team x,y,h", "%.1f, %.1f in, %.1f deg  d %.1f in", r.teamX, r.teamY, r.teamHeading, r.result.d);
+        telemetry.addData("aim: vr / vt (in/s)", "%.1f / %.1f", r.result.vr, r.result.vt);
+        telemetry.addData("rpm cmd / at release", "%.0f / %.0f  (wheel %.0f)  max %.0f @ %.2f V", r.rpmCmd,
+                r.result.rpmAtRelease, shooterController.RPM, r.rpmMaxEff, shooterController.batteryVolts);
+        telemetry.addData("hood cmd (deg travel)", "%.3f  servo %.2f deg", r.hoodDeg,
+                ShotControlTuning.hoodServoAtZeroDeg + ShotControlTuning.hoodServoDegPerHoodDeg * r.hoodDeg);
+        telemetry.addData("turret cmd / err (deg)", "%.2f / %.2f  (lead %.2f)", r.turretJavaDeg, r.lastTurretErr, r.result.turretLeadDeg);
+        telemetry.addData("claimed P(make)", "%.3f  feasible %s  occ %.2f  tof %.2f s", r.pMake, r.feasible, r.result.occF, r.result.tof);
+        telemetry.addData("FIRE GATE", "%s%s", ReducedShotController.GATE_TEXT[r.gateState],
+                r.gateState == ReducedShotController.GATE_UNSETTLED ? " (" + ReducedShotController.REFUSE_TEXT[r.gateRefuse] + ")" : "");
+        telemetry.addData("gate: P now / best ahead", "%.3f / %.3f  t_left %.2f s%s  cmd rates %.0f deg/s %.0f rpm/s",
+                r.feasible ? r.pMake : 0.0, r.gateBestAhead, r.gateTLeft,
+                r.requestActive ? (r.gateDeadline ? " DEADLINE" : " (request)") : "", r.turCmdRate, r.rpmCmdRate);
+        telemetry.addData("MOVEMENT PROTECTION", ShotControlTuning.gateProtect ? "ON (gamepad2 L-bumper = off)" : "OFF !!! (gamepad2 L-bumper = on)");
+        telemetry.addData("feed hold", "%s  predicted turret err at release %.2f deg", ShotHold.TEXT[shotHold.state], r.gateEstRelDeg);
+        telemetry.addData("burst: index / detected", "%d / %d", r.shotIndex, r.shotsDetected);
+        telemetry.addData("solve / look-ahead / gate (us)", "%.1f / %.1f / %.1f  max %.1f", r.solveNanos / 1e3,
+                r.lookNanos / 1e3, r.gateNanos / 1e3, r.maxSolveNanos / 1e3);
+        telemetry.addData("trims: speed % / turret deg", "%.1f / %.1f  %s", ShotControlTuning.speedTrimPct,
+                ShotControlTuning.turretTrimDeg, reducedSaveStatus);
     }
 
     private void turretDebugControls() {
