@@ -56,7 +56,7 @@ public class ShotTuner extends OpModeEX {
     /** Folder of the shot logs on the Control Hub (adb pull /sdcard/FIRST/shot_logs). */
     public static String LOG_DIR = "/sdcard/FIRST/shot_logs";
     /** Walk the 4-stand campaign (docs/UNDER_SHOOTER_TUNING.md section 6); false = free shooting, no position ids. */
-    public static boolean CAMPAIGN_ON = true;
+    public static boolean CAMPAIGN_ON = false;
 
     private final ShotHold hold = new ShotHold();
     private final ShotCampaign campaign = new ShotCampaign();

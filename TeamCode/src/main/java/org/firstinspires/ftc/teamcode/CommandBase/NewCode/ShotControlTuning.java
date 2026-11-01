@@ -86,7 +86,7 @@ public class ShotControlTuning {
     // Hood servo in plain 0..1 servo units, written straight to the servo. BOTTOM = far shots (flattest, hood travel 0),
     // TOP = near shots (steepest, travel 6.3 deg). Robot test 4: commanding 0.218 pushed the hood DOWN into its stop, so on
     // this servo a LOWER number is higher: top 0.146 is a guess (0.182 minus the measured 0.036 span). Set it with the hood check.
-    // (Renamed from hoodServoBottom / AtMax so the old saved 0.218 is not loaded.)
+    // (Renamed from hoodServoPosAtZero / hoodServoPosAtMax so the old saved 0.218 is not loaded.)
     public static double hoodServoBottom = 0.182;
     public static double hoodServoTop = 0.146;
     // HOOD CHECK (gamepad2, Shot Tuner and Test_tele): hold Y = hood goes to the TOP end (hoodServoTop, near shots);

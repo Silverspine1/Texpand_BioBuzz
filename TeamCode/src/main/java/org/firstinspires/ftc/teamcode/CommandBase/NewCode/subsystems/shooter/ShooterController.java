@@ -33,7 +33,10 @@ public class ShooterController extends SubSystem {
     SetTurretAngle turretController;
 
     Servo hoodRaw;
-    /** Last hood servo position written by the reduced path (0..1), for the displays. */
+    /** HOOD COMMAND [deg of hood travel: 0 = bottom (far shots) .. 6.3 = top (near shots)]. Set from the reduced solve in
+     *  runReducedShot() and trackHood(); execute() turns it into a servo position and writes the servo EVERY loop. */
+    public double hoodTargetDeg = 0.0;
+    /** Hood servo position (0..1) written this loop, for the displays. */
     public double hoodServoPos = Double.NaN;
     /** Where the turret gains came from, for the displays. */
     public String turretTuneSource = "not set";
@@ -306,12 +309,14 @@ public class ShooterController extends SubSystem {
             reduced.reset();
             reducedActive = false;
             reducedWasActive = false;
+            trackHood();
         }
 
-        if (ShotControlTuning.hoodCheck != 0) {        // gamepad2 Y held (ShotControlTuning.trimButtons): show a hood end
-            hoodServoPos = ShotControlTuning.hoodCheck == 1 ? ShotControlTuning.hoodServoBottom : ShotControlTuning.hoodServoTop;
-            hoodRaw.setPosition(hoodServoPos);
-        }
+        // the hood servo, every loop: gamepad2 Y held (ShotControlTuning.trimButtons) shows an end, otherwise hoodTargetDeg
+        if (ShotControlTuning.hoodCheck == 1) hoodServoPos = ShotControlTuning.hoodServoBottom;
+        else if (ShotControlTuning.hoodCheck == 2) hoodServoPos = ShotControlTuning.hoodServoTop;
+        else hoodServoPos = underHoodServoPos(hoodTargetDeg);
+        hoodRaw.setPosition(hoodServoPos);
 
         lastTurretDebugMode = turretDebugMode;
 
@@ -335,7 +340,7 @@ public class ShooterController extends SubSystem {
      * hood and turret set-points from the velocity-compensated aim table. Solves at ShotControlTuning.solvePeriodMs
      * (the turret's tuned command period); the fire gate is evaluated every loop.
      */
-    private void runReducedShot() {
+    private void applyReducedParams() {
         ReducedShotController.Params p = reduced.params;
         p.blueAlliance = ShotControlTuning.blueAlliance;
         p.pivotFromRobot = ShotControlTuning.pivotFromShooterTuning;
@@ -378,16 +383,32 @@ public class ShooterController extends SubSystem {
         p.detectDropFraction = ShotControlTuning.detectDropFraction;
         p.detectMinDropRpm = ShotControlTuning.detectMinDropRpm;
         p.burstResetS = ShotControlTuning.burstResetS;
+    }
 
+    private void solveReduced(double now) {
+        reduced.solve(now,
+                OdoMetry.X(), OdoMetry.Y(), OdoMetry.Heading(),
+                inputFilter.velocityX(), inputFilter.velocityY(),
+                inputFilter.headingRate(),
+                inputFilter.accelerationX(), inputFilter.accelerationY());
+        plannerMs = reduced.solveNanos / 1e6;
+    }
+
+    /** Targeting OFF: the hood still follows the range (solve only; wheel and turret untouched). */
+    private void trackHood() {
+        if (!reduced.hasModel() || reducedSolveTimer.milliseconds() < ShotControlTuning.solvePeriodMs) return;
+        reducedSolveTimer.reset();
+        applyReducedParams();
+        solveReduced(reducedClock.seconds());
+        hoodTargetDeg = reduced.hoodDeg;
+    }
+
+    private void runReducedShot() {
+        applyReducedParams();
         double now = reducedClock.seconds();
         if (!reducedWasActive || reducedSolveTimer.milliseconds() >= ShotControlTuning.solvePeriodMs) {
             reducedSolveTimer.reset();
-            reduced.solve(now,
-                    OdoMetry.X(), OdoMetry.Y(), OdoMetry.Heading(),
-                    inputFilter.velocityX(), inputFilter.velocityY(),
-                    inputFilter.headingRate(),
-                    inputFilter.accelerationX(), inputFilter.accelerationY());
-            plannerMs = reduced.solveNanos / 1e6;
+            solveReduced(now);
             // infeasible states still get a defined tracking command (nearest feasible node), so always apply it
             targetRPM = reduced.rpmCmd;
             if (forceRpm > 0.0) targetRPM = forceRpm;                       // ShotTuner slip-check shot (5700 rpm, hood 0)
@@ -398,7 +419,7 @@ public class ShooterController extends SubSystem {
             if (still && step <= ShotControlTuning.turretHoldBandDeg) turCmd = lastTurretCmd;   // hold: ignore sub-band noise
             lastTurretCmd = turCmd;
             turretController.setTarget(turCmd, 1.0, false);
-            setUnderHoodDegrees(Double.isNaN(forceHoodDeg) ? reduced.hoodDeg : forceHoodDeg);
+            hoodTargetDeg = Double.isNaN(forceHoodDeg) ? reduced.hoodDeg : forceHoodDeg;
         }
         reduced.sense(now, RPM, getTurretAimDeg(), encoder.getVelocity(), OdoMetry.getHeadingVelocityDeg());
     }
@@ -418,13 +439,7 @@ public class ShooterController extends SubSystem {
         return reducedClock.seconds();
     }
 
-    /** Under-shooter hood: travel 0..6.3 deg above the lower stop -> servo degrees (ShotControlTuning). */
-    public void setUnderHoodDegrees(double hoodTravelDeg) {
-        hoodServoPos = underHoodServoPos(hoodTravelDeg);
-        hoodRaw.setPosition(hoodServoPos);
-    }
-
-    /** Hood travel (0..6.3 deg above the lower stop) -> servo position 0..1 (ShotControlTuning.hoodServoBottom / AtMax). */
+    /** Hood travel (0..6.3 deg above the lower stop) -> servo position 0..1 (ShotControlTuning.hoodServoBottom / hoodServoTop). */
     public static double underHoodServoPos(double hoodTravelDeg) {
         double f = Math.max(0.0, Math.min(6.3, hoodTravelDeg)) / 6.3;
         return ShotControlTuning.hoodServoBottom + f * (ShotControlTuning.hoodServoTop - ShotControlTuning.hoodServoBottom);
