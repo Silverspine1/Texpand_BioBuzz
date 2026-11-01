@@ -69,6 +69,20 @@ public class ShotTuner extends OpModeEX {
     private FileWriter logWriter;
     private String logStatus = "log not opened";
     private boolean overrideNow;
+    private boolean flyTest = false, flyTestPrevTargeting = false;
+
+    /** INIT loop: keeps odometry running so the start pose is written and shown BEFORE you press PLAY (nothing else runs). */
+    @Override
+    public void init_loop() {
+        odometry.execute();
+        telemetry.addLine("=== SHOT TUNER: INIT (not started) ===");
+        telemetry.addLine("Check the pose below equals your start pose, the model is loaded, then press PLAY.");
+        ShotDebug.pose(odometry, shooterController, this::put);
+        put("model", shooterController.reducedStatus);
+        put("battery", f("%.2f V", shooterController.batteryVolts));
+        put("log", logStatus);
+        dash.update();
+    }
 
     @Override
     public void initEX() {
@@ -88,10 +102,25 @@ public class ShotTuner extends OpModeEX {
         final ReducedShotController r = shooterController.reduced;
         final double now = shooterController.reducedSeconds();
 
+        // ---- flywheel scale / direction test: gamepad2 RIGHT TRIGGER = that much power, targeting off while held ----
+        double trig = gamepad2.right_trigger;
+        if (trig > 0.05) {
+            if (!flyTest) {
+                flyTest = true;
+                flyTestPrevTargeting = shooterController.targeting;
+            }
+            shooterController.targeting = false;
+            shooterController.manualFlywheelPower = trig;
+        } else if (flyTest) {
+            flyTest = false;
+            shooterController.manualFlywheelPower = 0.0;
+            shooterController.targeting = flyTestPrevTargeting;
+        }
+
         // ---- driver ----
         driveBase.drivePowers(gamepad1.right_stick_y, -gamepad1.right_stick_x, (gamepad1.left_trigger - gamepad1.right_trigger));
         IntakeHardware.Vertical = driveBase.vertical;
-        if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up) shooterController.targeting = !shooterController.targeting;
+        if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up && !flyTest) shooterController.targeting = !shooterController.targeting;
         if (!lastGamepad1.right_stick_button && currentGamepad1.right_stick_button) {
             odometry.setPose(ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg);
             status = "pose set";
@@ -276,6 +305,10 @@ public class ShotTuner extends OpModeEX {
         say(ShotControlTuning.gateProtect
                 ? "=== MOVEMENT PROTECTION: ON  (gamepad1 B turns it OFF) ==="
                 : "!!! MOVEMENT PROTECTION: OFF  (fires as soon as feasible; gamepad1 B turns it ON) !!!");
+        if (flyTest) say(">>> FLYWHEEL TEST: gamepad2 right trigger held = manual power, targeting OFF. Read the rpm below, then release. <<<");
+        ShotDebug.pose(odometry, shooterController, this::put);
+        ShotDebug.flywheel(shooterController, this::put);
+        say("--- SHOT ---");
         put("feed", hold.state == ShotHold.HOLDING
                 ? f("HELD %.2f s: gate says %s%s", hold.heldBackS(now), ReducedShotController.GATE_TEXT[r.gateState],
                     r.gateState == ReducedShotController.GATE_UNSETTLED ? " (" + ReducedShotController.REFUSE_TEXT[r.gateRefuse] + ")" : "")

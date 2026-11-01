@@ -179,6 +179,20 @@ public class Odometry extends SubSystem {
         normilised = normalizeRadians(Math.toRadians(rawTarget));
     }
 
+    /** True while a setPose() is waiting for the Pinpoint to report READY (odometry is frozen at the requested pose until then). */
+    public boolean isPosePending() {
+        return posePending;
+    }
+
+    /** Pinpoint device status text (READY, CALIBRATING, NOT_READY, ...). */
+    public String pinpointStatus() {
+        try {
+            return String.valueOf(odo.getDeviceStatus());
+        } catch (Throwable t) {
+            return "unknown";
+        }
+    }
+
     /** Writes a pending pose once the Pinpoint is READY. @return true if it was written this call. */
     private boolean applyPendingPose() {
         if (!posePending) return false;

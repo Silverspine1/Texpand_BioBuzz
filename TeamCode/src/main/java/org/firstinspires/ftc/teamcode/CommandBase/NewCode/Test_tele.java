@@ -159,6 +159,7 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("pose (R-stick btn sets)", "%.0f, %.0f cm @ %.0f deg  %s",
                 ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg, poseStatus);
 
+        ShotDebug.pose(odometry, shooterController, telemetry::addData);
         vision.addTelemetry(telemetry);
 
         telemetry.addLine("=== TURRET ENCODER ===");
@@ -225,6 +226,7 @@ public class Test_tele extends OpModeEX {
         }
         reducedShotControls();
         reducedShotTelemetry();
+        ShotDebug.flywheel(shooterController, telemetry::addData);
         loop = Loop.milliseconds();
         telemetry.addData("loot time(ms)", "%.1f", loop);
 

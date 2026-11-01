@@ -41,6 +41,8 @@ public final class ReducedShotController {
         public double gateRpmTolRpm = FireGate.RPM_TOL;
         public double gateRpmStaticRps = FireGate.RPM_STATIC_RPS;
         public double gateOmegaMaxDps = FireGate.OMEGA_MAX_DPS;
+        /** Hold the shot while |a| or |d speed/dt| of the filtered chassis velocity exceeds this [in/s^2]; 0 = off (practice bench: +2 % strict makes). */
+        public double gateAccelHoldIps2 = 100.0;
         public double gateLookEps = FireGate.LOOK_EPS;
         /** false: skip the 5 look-ahead solves (p_ahead = 0, so never WAIT_BETTER). */
         public boolean gateLookAhead = true;
@@ -102,6 +104,11 @@ public final class ReducedShotController {
     // gate bookkeeping
     private double prevSolveS = Double.NaN, prevTurretCmd, prevRpmCmd;
     private double requestStartS;
+    // acceleration hold: low-passed |a| and speed rate of the (filtered) team-frame chassis velocity [in/s^2]
+    private double accPrevS = Double.NaN, accPrevVx, accPrevVy, accPrevSpeed, accAx, accAy, accDs;
+    /** Acceleration estimate used by the hold [in/s^2] (max of |a| and |d speed/dt|). */
+    public double gateAccelIps2;
+    private static final double ACC_TAU_S = 0.10;
 
     public ReducedShotController() {
     }
@@ -230,6 +237,31 @@ public final class ReducedShotController {
         gateRefuse = g.lastRefuse;
         gateBestAhead = g.lastBest;
         gateEstRelDeg = g.lastEstRel;
+        // acceleration hold (gate_policies.steady): not while accelerating or braking; the protection button disables it too
+        double sp = Math.hypot(teamVx, teamVy);
+        if (Double.isNaN(accPrevS)) {
+            accAx = accAy = accDs = 0.0;
+        } else {
+            double dtA = nowS - accPrevS;
+            if (dtA > 1e-6 && dtA <= 0.2) {
+                double k = 1.0 - Math.exp(-dtA / ACC_TAU_S);
+                accAx += k * ((teamVx - accPrevVx) / dtA - accAx);
+                accAy += k * ((teamVy - accPrevVy) / dtA - accAy);
+                accDs += k * ((sp - accPrevSpeed) / dtA - accDs);
+            } else if (dtA > 0.2) {
+                accAx = accAy = accDs = 0.0;
+            }
+        }
+        accPrevS = nowS;
+        accPrevVx = teamVx;
+        accPrevVy = teamVy;
+        accPrevSpeed = sp;
+        gateAccelIps2 = Math.max(Math.hypot(accAx, accAy), Math.abs(accDs));
+        if (P.gateProtect && P.gateAccelHoldIps2 > 0.0 && feasible && gateState == GATE_FIRE
+                && gateAccelIps2 > P.gateAccelHoldIps2) {
+            gateState = GATE_UNSETTLED;
+            gateRefuse = 0;
+        }
         gateOpen = gateState == GATE_FIRE;
         gateNanos = System.nanoTime() - t0;
     }
