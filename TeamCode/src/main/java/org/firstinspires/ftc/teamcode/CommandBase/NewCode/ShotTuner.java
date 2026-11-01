@@ -153,15 +153,8 @@ public class ShotTuner extends OpModeEX {
         if (!lastGamepad2.x && currentGamepad2.x) label(ShotCsv.LONG);
         if (!lastGamepad2.left_bumper && currentGamepad2.left_bumper) label(ShotCsv.LEFT);
         if (!lastGamepad2.right_bumper && currentGamepad2.right_bumper) label(ShotCsv.RIGHT);
-        if (!lastGamepad2.dpad_up && currentGamepad2.dpad_up) ShotControlTuning.speedTrimPct += ShotControlTuning.speedTrimStepPct;
-        if (!lastGamepad2.dpad_down && currentGamepad2.dpad_down) ShotControlTuning.speedTrimPct -= ShotControlTuning.speedTrimStepPct;
-        if (!lastGamepad2.dpad_right && currentGamepad2.dpad_right) ShotControlTuning.turretTrimDeg += ShotControlTuning.turretTrimStepDeg;
-        if (!lastGamepad2.dpad_left && currentGamepad2.dpad_left) ShotControlTuning.turretTrimDeg -= ShotControlTuning.turretTrimStepDeg;
-        if (!lastGamepad2.back && currentGamepad2.back) {
-            ShotControlTuning.speedTrimPct = 0;
-            ShotControlTuning.turretTrimDeg = 0;
-            ShotControlTuning.hoodTrimDeg = 0;
-        }
+        String trim = ShotControlTuning.trimButtons(currentGamepad2, lastGamepad2);
+        if (trim != null) status = trim + "  (gamepad2 START saves)";
         if (!lastGamepad2.left_stick_button && currentGamepad2.left_stick_button) {
             shooterController.loadReducedModel();
             status = "reloaded: " + shooterController.reducedStatus;
@@ -222,6 +215,8 @@ public class ShotTuner extends OpModeEX {
         s.pClaim = r.feasible ? r.pMake : 0.0;
         s.gateState = ReducedShotController.GATE_TEXT[r.gateState];
         s.override = hold.state == ShotHold.OVERRIDE;
+        // rpm in the row is the REAL wheel rpm; the model rpm = rpm / rpmScale (field_tune needs that)
+        s.note = f("rpmScale=%.3f angleOffsetDeg=%.2f", ShotControlTuning.rpmScale, ShotControlTuning.angleOffsetDeg);
         s.protect = ShotControlTuning.gateProtect;
         s.estRelDeg = r.gateEstRelDeg;
         s.hoodCmd = r.hoodDeg;
@@ -301,6 +296,7 @@ public class ShotTuner extends OpModeEX {
     }
 
     private void telemetryBlock(ReducedShotController r, double now, boolean applicable) {
+        say("TUNE: " + ShotControlTuning.tuneLine());
         say(ShotControlTuning.gateProtect
                 ? "=== MOVEMENT PROTECTION: ON  (gamepad1 B turns it OFF) ==="
                 : "!!! MOVEMENT PROTECTION: OFF  (fires as soon as feasible; gamepad1 B turns it ON) !!!");
@@ -324,7 +320,7 @@ public class ShotTuner extends OpModeEX {
         put("range (pivot->aim) / hood / turret cmd", f("%.1f in / %.3f deg / %.1f deg", r.result.d, r.hoodDeg, r.turretJavaDeg));
         put("controller", f("active %s targeting %s  %s", shooterController.reducedActive,
                 shooterController.targeting, shooterController.reducedStatus));
-        put("trims speed % / turret deg", f("%.1f / %.1f", ShotControlTuning.speedTrimPct, ShotControlTuning.turretTrimDeg));
+
         if (CAMPAIGN_ON) {
             put("CAMPAIGN", campaign.instruction());
             if (!campaign.done()) {

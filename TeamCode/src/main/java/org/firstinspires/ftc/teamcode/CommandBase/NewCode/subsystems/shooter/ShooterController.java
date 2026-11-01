@@ -336,9 +336,9 @@ public class ShooterController extends SubSystem {
         p.pivotForwardM = ShooterTuning.turretAxisForwardMeters;
         p.pivotSidewaysM = ShooterTuning.turretAxisSidewaysMeters;
         p.useModelTurretLead = ShotControlTuning.useModelTurretLead;
-        p.speedTrimPct = ShotControlTuning.speedTrimPct;
+        p.rpmScale = ShotControlTuning.rpmScale;
+        p.angleOffsetDeg = ShotControlTuning.angleOffsetDeg;
         p.turretTrimDeg = ShotControlTuning.turretTrimDeg;
-        p.hoodTrimDeg = ShotControlTuning.hoodTrimDeg;
         p.gateProtect = ShotControlTuning.gateProtect;
         p.gateTurRelTolDeg = ShotControlTuning.gateTurRelTolDeg;
         p.gateTurErrDeg = ShotControlTuning.gateTurErrDeg;

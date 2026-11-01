@@ -27,6 +27,11 @@ public final class ReducedShotController {
         /** Keep the model's bearing-rate turret lead (turret_lead_s, tuned on the sim's turret model). */
         public boolean useModelTurretLead = true;
         public double speedTrimPct = 0.0, turretTrimDeg = 0.0, hoodTrimDeg = 0.0;
+        /** FIELD TUNING 1: real wheel rpm = model rpm x rpmScale (the real wheel throws the ball faster per rpm than the
+         *  contact sim says when < 1). 1 = Python parity. */
+        public double rpmScale = 1.0;
+        /** FIELD TUNING 2: the real exit angle minus the model's [deg] (+ = real shot steeper). 0 = Python parity. */
+        public double angleOffsetDeg = 0.0;
         /** Battery-limited wheel ceiling [rpm] (R4: ~0.98 x no-load rpm x V/12); <= 0 = the model's rpm_max.
          *  The solve clamps to min(model rpm_max, this): a state that needs more becomes infeasible, claim 0. */
         public double rpmMaxCeiling = 0.0;
@@ -94,6 +99,8 @@ public final class ReducedShotController {
     public double turCmdRate, rpmCmdRate;
     /** Effective wheel ceiling used by the last solve [rpm]. */
     public double rpmMaxEff;
+    /** Real wheel rpm the model expects at release (result.rpmAtRelease x rpmScale) and the rpmScale of the last solve. */
+    public double rpmAtReleaseReal, rpmScaleUsed = 1.0;
     public long solveNanos, maxSolveNanos, lookNanos, gateNanos;
     public double teamX, teamY, teamHeading, teamVx, teamVy;
 
@@ -191,8 +198,8 @@ public final class ReducedShotController {
         if (nowS - lastShotS > P.burstResetS) shotIndex = 0;
         // rpm-dip shot detector (optional): a release pulls the wheel down by ~result.dropRpm
         if (P.detectShotsFromRpm && targeter != null && rpmCmd > 0) {
-            double thr = Math.max(P.detectMinDropRpm, P.detectDropFraction * result.dropRpm);
-            double expected = shotIndex == 0 ? rpmCmd : result.rpmAtRelease;
+            double thr = Math.max(P.detectMinDropRpm, P.detectDropFraction * result.dropRpm * rpmScaleUsed);
+            double expected = shotIndex == 0 ? rpmCmd : rpmAtReleaseReal;
             if (detectArmed && wheelRpm < expected - thr) {
                 notifyShot(nowS);
                 detectArmed = false;
@@ -313,9 +320,13 @@ public final class ReducedShotController {
             m.pivotFwdIn = modelPivotFwd;
             m.pivotRightIn = modelPivotRight;
         }
-        // battery ceiling (R4 7.1 item 5): the solve clamps the inverse and the burst command to it
-        m.rpmMax = P.rpmMaxCeiling > 0.0 ? Math.min(modelRpmMax, P.rpmMaxCeiling) : modelRpmMax;
-        rpmMaxEff = m.rpmMax;
+        // battery ceiling (R4 7.1 item 5): the solve clamps the inverse and the burst command to it. The solve works in MODEL
+        // rpm; the real wheel turns rpmScale x that, so the real ceiling is ceiling / rpmScale in model rpm.
+        double s = P.rpmScale > 0.05 ? P.rpmScale : 1.0;
+        rpmScaleUsed = s;
+        m.rpmMax = P.rpmMaxCeiling > 0.0 ? Math.min(modelRpmMax, P.rpmMaxCeiling / s) : modelRpmMax;
+        rpmMaxEff = m.rpmMax * s;
+        targeter.angleOffsetDeg = P.angleOffsetDeg;
         if (nowS - lastShotS > P.burstResetS) shotIndex = 0;
         double spacing = shotIndex >= 1 ? (nowS - lastShotS) + m.fireS : 0.0;
 
@@ -341,7 +352,8 @@ public final class ReducedShotController {
         lookNanos = System.nanoTime() - t1;
         if (solveNanos + lookNanos > maxSolveNanos) maxSolveNanos = solveNanos + lookNanos;
 
-        rpmCmd = result.rpmCmd;
+        rpmCmd = result.rpmCmd * s;
+        rpmAtReleaseReal = result.rpmAtRelease * s;
         hoodDeg = Math.min(Math.max(result.hoodDeg + P.hoodTrimDeg, m.shotHood[0]), m.shotHood[m.nH - 1]);
         turretTeamDeg = result.turretDeg - (P.useModelTurretLead ? 0.0 : result.turretLeadDeg);
         turretJavaDeg = ShotFrame.turretTeamToJava(turretTeamDeg) + P.turretTrimDeg;

@@ -217,15 +217,8 @@ public class Test_tele extends OpModeEX {
      * (default ON; always starts ON), B (hold) = feed override. gamepad1 LEFT BUMPER feeds: held until the gate says FIRE.
      */
     private void reducedShotControls() {
-        if (!lastGamepad2.dpad_up && currentGamepad2.dpad_up) ShotControlTuning.speedTrimPct += ShotControlTuning.speedTrimStepPct;
-        if (!lastGamepad2.dpad_down && currentGamepad2.dpad_down) ShotControlTuning.speedTrimPct -= ShotControlTuning.speedTrimStepPct;
-        if (!lastGamepad2.dpad_right && currentGamepad2.dpad_right) ShotControlTuning.turretTrimDeg += ShotControlTuning.turretTrimStepDeg;
-        if (!lastGamepad2.dpad_left && currentGamepad2.dpad_left) ShotControlTuning.turretTrimDeg -= ShotControlTuning.turretTrimStepDeg;
-        if (!lastGamepad2.back && currentGamepad2.back) {
-            ShotControlTuning.speedTrimPct = 0;
-            ShotControlTuning.turretTrimDeg = 0;
-            ShotControlTuning.hoodTrimDeg = 0;
-        }
+        String trim = ShotControlTuning.trimButtons(currentGamepad2, lastGamepad2);
+        if (trim != null) reducedSaveStatus = trim + " (START saves)";
         if (!lastGamepad2.x && currentGamepad2.x) shooterController.loadReducedModel();
         if (!lastGamepad2.a && currentGamepad2.a) shooterController.requestReducedShot();
         if (!lastGamepad2.left_bumper && currentGamepad2.left_bumper) ShotControlTuning.gateProtect = !ShotControlTuning.gateProtect;
@@ -250,7 +243,7 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("aim: team x,y,h", "%.1f, %.1f in, %.1f deg  d %.1f in", r.teamX, r.teamY, r.teamHeading, r.result.d);
         telemetry.addData("aim: vr / vt (in/s)", "%.1f / %.1f", r.result.vr, r.result.vt);
         telemetry.addData("rpm cmd / at release", "%.0f / %.0f  (wheel %.0f)  max %.0f @ %.2f V", r.rpmCmd,
-                r.result.rpmAtRelease, shooterController.RPM, r.rpmMaxEff, shooterController.batteryVolts);
+                r.rpmAtReleaseReal, shooterController.RPM, r.rpmMaxEff, shooterController.batteryVolts);
         telemetry.addData("hood cmd (deg travel)", "%.3f  servo pos %.4f (0.182 bottom .. 0.218 top)", r.hoodDeg,
                 ShooterController.underHoodServoPos(r.hoodDeg));
         telemetry.addData("turret cmd / err (deg)", "%.2f / %.2f  (lead %.2f)", r.turretJavaDeg, r.lastTurretErr, r.result.turretLeadDeg);
@@ -265,8 +258,7 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("burst: index / detected", "%d / %d", r.shotIndex, r.shotsDetected);
         telemetry.addData("solve / look-ahead / gate (us)", "%.1f / %.1f / %.1f  max %.1f", r.solveNanos / 1e3,
                 r.lookNanos / 1e3, r.gateNanos / 1e3, r.maxSolveNanos / 1e3);
-        telemetry.addData("trims: speed % / turret deg", "%.1f / %.1f  %s", ShotControlTuning.speedTrimPct,
-                ShotControlTuning.turretTrimDeg, reducedSaveStatus);
+        telemetry.addData("TUNE", "%s  %s", ShotControlTuning.tuneLine(), reducedSaveStatus);
     }
 
     private void turretDebugControls() {

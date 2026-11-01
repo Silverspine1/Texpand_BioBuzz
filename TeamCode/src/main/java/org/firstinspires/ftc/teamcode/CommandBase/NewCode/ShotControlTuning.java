@@ -64,11 +64,20 @@ public class ShotControlTuning {
     // Solve period [ms]: the turret was tuned with a 50 ms command period (old planner); the solve itself is ~us.
     public static double solvePeriodMs = 50;
 
-    // Driver trims (gamepad2 dpad in Test_tele)
-    public static double speedTrimPct = 0.0;
+    // ===================== THE TWO FIELD-TUNING VALUES (gamepad2 in Shot Tuner and Test_tele, START saves) =====================
+    // rpmScale: real wheel rpm = model rpm x rpmScale. Shots SHORT at every range -> raise it, LONG at every range -> lower it.
+    //   gamepad2 D-pad UP / DOWN = +/- rpmScaleStep. 0.70 is the starting guess from the first robot test (the model asked
+    //   ~5700 where ~3500-4000 scored); 1.0 = the contact sim as built.
+    public static double rpmScale = 0.70;
+    public static double rpmScaleStep = 0.01;
+    // angleOffsetDeg: the real exit angle minus the model's [deg]. Use it when near and far disagree after rpmScale:
+    //   near LONG + far SHORT -> the real shot is flatter than the model -> DECREASE (D-pad LEFT);
+    //   near SHORT + far LONG -> steeper -> INCREASE (D-pad RIGHT). gamepad2 D-pad LEFT / RIGHT = -/+ angleOffsetStepDeg.
+    public static double angleOffsetDeg = 0.0;
+    public static double angleOffsetStepDeg = 0.5;
+    // ==========================================================================================================================
+    // Turret aim trim (not a model value): hold gamepad2 LEFT TRIGGER + D-pad LEFT / RIGHT.
     public static double turretTrimDeg = 0.0;
-    public static double hoodTrimDeg = 0.0;
-    public static double speedTrimStepPct = 0.5;
     public static double turretTrimStepDeg = 0.5;
 
     // Hood: travel 0..6.3 deg (lower stop = 0) -> servo degrees. 48/40 gears: 1.2 servo deg per hood deg. MEASURE.
@@ -175,6 +184,33 @@ public class ShotControlTuning {
     }
 
     /** {@code /sdcard/FIRST/settings/<name>} on the Control Hub. */
+    /**
+     * The tuning buttons, the same in every OpMode (gamepad2): D-pad UP/DOWN rpmScale, D-pad LEFT/RIGHT angleOffsetDeg, with
+     * LEFT TRIGGER held D-pad LEFT/RIGHT = turret trim, BACK resets the turret trim. Returns a status text or null.
+     */
+    public static String trimButtons(com.qualcomm.robotcore.hardware.Gamepad cur, com.qualcomm.robotcore.hardware.Gamepad last) {
+        boolean turret = cur.left_trigger > 0.5;
+        String s = null;
+        if (cur.dpad_up && !last.dpad_up) { rpmScale = Math.round((rpmScale + rpmScaleStep) * 1000.0) / 1000.0; s = "rpmScale " + rpmScale; }
+        if (cur.dpad_down && !last.dpad_down) { rpmScale = Math.max(0.3, Math.round((rpmScale - rpmScaleStep) * 1000.0) / 1000.0); s = "rpmScale " + rpmScale; }
+        if (cur.dpad_right && !last.dpad_right) {
+            if (turret) { turretTrimDeg += turretTrimStepDeg; s = "turret trim " + turretTrimDeg; }
+            else { angleOffsetDeg += angleOffsetStepDeg; s = "angleOffset " + angleOffsetDeg; }
+        }
+        if (cur.dpad_left && !last.dpad_left) {
+            if (turret) { turretTrimDeg -= turretTrimStepDeg; s = "turret trim " + turretTrimDeg; }
+            else { angleOffsetDeg -= angleOffsetStepDeg; s = "angleOffset " + angleOffsetDeg; }
+        }
+        if (cur.back && !last.back) { turretTrimDeg = 0.0; s = "turret trim reset"; }
+        return s;
+    }
+
+    /** One line with the two tuning values and the turret trim, for every display. */
+    public static String tuneLine() {
+        return String.format(java.util.Locale.US, "rpmScale %.2f (gp2 D-pad up/down)   angleOffset %+.1f deg (gp2 D-pad left/right)   turret trim %+.1f",
+                rpmScale, angleOffsetDeg, turretTrimDeg);
+    }
+
     public static File settingsFile(String name) {
         return AppUtil.getInstance().getSettingsFile(name);
     }
