@@ -12,24 +12,22 @@ import org.firstinspires.ftc.teamcode.CommandBase.LoopProfiler;
 import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
 
 import dev.weaponboy.nexus_command_base.Hardware.MotorEx;
-import dev.weaponboy.nexus_command_base.Hardware.ServoDegrees;
 import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 
 
+/**
+ * Shooter subsystem: flywheel, under-shooter hood and turret, all commanded by the REDUCED shot controller (the model
+ * file). The old Shotplanner (a different shooter: 72 mm wheel, 45-75 deg hood) is deleted; without a model the flywheel
+ * stays off and the turret is not driven.
+ */
 public class ShooterController extends SubSystem {
 
-    Shotplanner shotPlanner = new Shotplanner(new Shotplanner.Config());
-    ElapsedTime plannerTimer = new ElapsedTime();
     ElapsedTime loopTimer = new ElapsedTime();
     FlywheelController flywheel = new FlywheelController();
     PlannerInputFilter inputFilter = new PlannerInputFilter();
-    ShotSolutionHold solutionHold = new ShotSolutionHold();
-    boolean wasTargeting = false;
     public AxonEncoder encoder;
     Odometry OdoMetry;
 
-    public Shotplanner.BlueHiveSide blueHiveSide = Shotplanner.BlueHiveSide.AUDIENCE;
-    public ServoDegrees Hood = new ServoDegrees();
     Servo turretServo1;
     Servo turretServo2;
     SetTurretAngle turretController;
@@ -59,11 +57,9 @@ public class ShooterController extends SubSystem {
     public ServoSelect manualServoSelect = ServoSelect.BOTH;
     public double manualTurretPower = 0;
 
-    public Shotplanner.ShotSolution lastShot;
-    public Shotplanner.RobotState lastRobotState;
     public double plannerMs = 0;
 
-    // ---- under-shooter REDUCED shot control (ShotControlTuning.enabled; OFF = old planner path unchanged) ----
+    // ---- under-shooter REDUCED shot control: the only command source ----
     public final ReducedShotController reduced = new ReducedShotController();
     public String reducedStatus = "not loaded";
     /** True while the reduced controller is commanding rpm / hood / turret this loop. */
@@ -99,13 +95,11 @@ public class ShooterController extends SubSystem {
 
         shooterMotor.initMotor("shooterMotor", getOpMode().hardwareMap);
 
-        Hood.initServo("hoodServ",getOpMode().hardwareMap);
         turretServo1 = getOpMode().hardwareMap.get(Servo.class, "turretServo1");
         turretServo2 = getOpMode().hardwareMap.get(Servo.class, "turretServo2");
 
         encoder = new AxonEncoder();
         encoder.init(getOpMode().hardwareMap, "turretEncoder");
-        Hood.setRange(355);
         hoodRaw = getOpMode().hardwareMap.get(Servo.class, "hoodServ");
 
         turretController = new SetTurretAngle(
@@ -130,7 +124,6 @@ public class ShooterController extends SubSystem {
             battery = null;          // no ceiling from the battery (model rpm_max)
         }
         loadReducedModel();
-        if (reduced.hasModel()) ShotControlTuning.enabled = true;   // the old planner is for a different shooter
     }
 
     /**
@@ -158,21 +151,36 @@ public class ShooterController extends SubSystem {
     }
 
     /**
-     * Loads /sdcard/FIRST/settings/{ShotControlTuning.modelFile} (default robot_model_red_audience.json; recommended
-     * robot_model_red_audience_r4.json) + the optional field-tune export. Never throws: a missing or bad file leaves
-     * the reduced controller without a model and the old planner in charge.
+     * Loads the model {@code ShotControlTuning.modelFile}: from /sdcard/FIRST/settings/ when a file of that name was pushed
+     * there (override), otherwise the copy BUILT INTO the app (TeamCode/src/main/assets/), so a fresh hub works without adb.
+     * Then the optional field-tune export. Never throws: a bad file leaves no model (flywheel off, status says why).
      */
     public void loadReducedModel() {
         try {
             String name = ShotControlTuning.modelFile == null || ShotControlTuning.modelFile.trim().isEmpty()
                     ? ReducedShotModel.MODEL_FILE : ShotControlTuning.modelFile.trim();
             java.io.File f = ShotControlTuning.settingsFile(name);
-            if (!f.exists()) {
-                reduced.setModel(null);
-                reducedStatus = "missing " + f.getPath();
-                return;
+            ReducedShotModel m;
+            String source;
+            if (f.exists()) {
+                m = ReducedShotModel.load(f);
+                source = f.getPath();
+            } else {
+                java.io.InputStream in;
+                try {
+                    in = getOpMode().hardwareMap.appContext.getAssets().open(name);
+                } catch (java.io.IOException e) {
+                    reduced.setModel(null);
+                    reducedStatus = "missing: " + name + " is neither in " + f.getParent() + " nor built into the app";
+                    return;
+                }
+                try {
+                    m = ReducedShotModel.fromJson(ReducedShotModel.readText(in));
+                } finally {
+                    in.close();
+                }
+                source = "built-in " + name;
             }
-            ReducedShotModel m = ReducedShotModel.load(f);
             java.io.File ft = ShotControlTuning.settingsFile(ShotControlTuning.fieldTuneFile == null
                     || ShotControlTuning.fieldTuneFile.trim().isEmpty()
                     ? ReducedShotModel.FIELD_TUNE_FILE : ShotControlTuning.fieldTuneFile.trim());
@@ -180,7 +188,7 @@ public class ShooterController extends SubSystem {
                 m.applyFieldTune(ReducedShotModel.readText(ft));
             }
             reduced.setModel(m);
-            reducedStatus = "loaded: " + m.describe();
+            reducedStatus = "loaded (" + source + "): " + m.describe();
         } catch (Throwable t) {
             reduced.setModel(null);
             reducedStatus = "load failed: " + t.getMessage();
@@ -206,22 +214,6 @@ public class ShooterController extends SubSystem {
     }
 
     private void applyTuning() {
-        Shotplanner.Config c = shotPlanner.getConfig();
-        c.flywheelRadiusMeters = Math.max(0.001, ShooterTuning.flywheelRadiusMeters);
-        c.muzzleEfficiency = Math.max(0.05, ShooterTuning.muzzleEfficiency);
-        c.magnusK = ShooterTuning.magnusK;
-        c.maxFlywheelRPM = Math.max(100, ShooterTuning.maxFlywheelRPM);
-        c.requiredClearanceMeters = ShooterTuning.requiredClearanceMeters;
-        c.muzzleHeightMeters = ShooterTuning.muzzleHeightMeters;
-        c.turretAxisForwardMeters = ShooterTuning.turretAxisForwardMeters;
-        c.muzzleForwardFromTurretMeters = ShooterTuning.muzzleForwardFromTurretMeters;
-        c.turretAxisLeftMeters = ShooterTuning.turretAxisSidewaysMeters;
-
-        double low = Math.min(ShooterTuning.hoodLaunchAtMinDeg, ShooterTuning.hoodLaunchAtMaxDeg);
-        double high = Math.max(ShooterTuning.hoodLaunchAtMinDeg, ShooterTuning.hoodLaunchAtMaxDeg);
-        c.minLaunchAngleDeg = low;
-        c.maxLaunchAngleDeg = Math.max(high, low + 1);
-
         flywheel.kF = ShooterTuning.flywheelKF;
         flywheel.kP = ShooterTuning.flywheelKP;
         flywheel.kI = ShooterTuning.flywheelKI;
@@ -234,50 +226,9 @@ public class ShooterController extends SubSystem {
         inputFilter.headingRateDeadbandDps = ShooterTuning.plannerHeadingRateDeadbandDps;
         inputFilter.turretRateDeadbandDps = ShooterTuning.plannerTurretRateDeadbandDps;
         inputFilter.useAcceleration = ShooterTuning.plannerUseAcceleration;
-        solutionHold.holdSolves = (int) Math.max(0, ShooterTuning.plannerHoldSolves);
     }
 
-    public void setHoodDegrees(double theta) {
-        double launchSpan = ShooterTuning.hoodLaunchAtMaxDeg - ShooterTuning.hoodLaunchAtMinDeg;
-        double servoSpan = ShooterTuning.hoodServoAtMaxDeg - ShooterTuning.hoodServoAtMinDeg;
-        double fraction = Math.abs(launchSpan) < 1e-6 ? 0 : (theta - ShooterTuning.hoodLaunchAtMinDeg) / launchSpan;
-        double servoPos = ShooterTuning.hoodServoAtMinDeg + fraction * servoSpan;
-
-        double lowLimit = Math.min(ShooterTuning.hoodServoAtMinDeg, ShooterTuning.hoodServoAtMaxDeg);
-        double highLimit = Math.max(ShooterTuning.hoodServoAtMinDeg, ShooterTuning.hoodServoAtMaxDeg);
-        Hood.setPosition(Math.max(lowLimit, Math.min(highLimit, servoPos)));
-    }
-
-    public Shotplanner.HiveTarget getHiveTarget() {
-        return getHiveTarget(blueHiveSide);
-    }
-
-    public static Shotplanner.HiveTarget getHiveTarget(Shotplanner.BlueHiveSide side) {
-        boolean audience = side == Shotplanner.BlueHiveSide.AUDIENCE;
-        return new Shotplanner.HiveTarget(
-                audience ? ShooterTuning.audienceGoalX : ShooterTuning.oppositeGoalX,
-                audience ? ShooterTuning.audienceGoalY : ShooterTuning.oppositeGoalY,
-                ShooterTuning.openingBottomZ,
-                audience ? 180.0 : 0.0
-        );
-    }
-
-    public Shotplanner.Config getPlannerConfig() {
-        return shotPlanner.getConfig();
-    }
-
-    /** Turret angle that points straight at the goal from the turret axis, in the planner's convention. */
-    public double getGoalBearingDeg() {
-        Shotplanner.RobotState pose = new Shotplanner.RobotState(
-                OdoMetry.X() / 100, OdoMetry.Y() / 100, 0, 0, OdoMetry.Heading(), 0, 0);
-        double bearing = shotPlanner.bearingToTargetDeg(pose, getHiveTarget()) - OdoMetry.Heading();
-        bearing %= 360.0;
-        if (bearing > 180) bearing -= 360;
-        if (bearing <= -180) bearing += 360;
-        return bearing;
-    }
-
-    /** Where the turret is actually pointing, in the planner's convention (encoder reading minus the zero offset). */
+    /** Where the turret is actually pointing, robot-relative (encoder reading minus the zero offset). */
     public double getTurretAimDeg() {
         return encoder.getTurretAngle() - ShooterTuning.turretZeroOffsetDeg;
     }
@@ -335,12 +286,12 @@ public class ShooterController extends SubSystem {
             stopFlywheel();
 
         } else if (targeting) {
-            reducedActive = ShotControlTuning.enabled && reduced.hasModel();
+            reducedActive = reduced.hasModel();
             if (reducedActive) {
                 runReducedShot();
-            } else if (!wasTargeting || plannerTimer.milliseconds() >= ShooterTuning.plannerPeriodMs) {
-                plannerTimer.reset();
-                runShotPlanner();
+            } else {                       // no model: nothing to aim with; wheel off, turret not driven (status says why)
+                targetRPM = 0;
+                turretController.stop();
             }
             reducedWasActive = reducedActive;
 
@@ -351,13 +302,11 @@ public class ShooterController extends SubSystem {
             stopFlywheel();
             turretController.stop();
             lastTurretCmd = Double.NaN;
-            solutionHold.reset();
             reduced.reset();
             reducedActive = false;
             reducedWasActive = false;
         }
 
-        wasTargeting = targeting && turretDebugMode == TurretDebugMode.OFF;
         lastTurretDebugMode = turretDebugMode;
 
         if (turretDebugMode != TurretDebugMode.MANUAL) {
@@ -374,47 +323,6 @@ public class ShooterController extends SubSystem {
         shooterMotor.update(flywheelPower);
     }
 
-    private void runShotPlanner() {
-        Shotplanner.RobotState robot = new Shotplanner.RobotState(
-                OdoMetry.X()/100,
-                OdoMetry.Y()/100,
-
-                inputFilter.velocityX(),
-                inputFilter.velocityY(),
-
-                inputFilter.accelerationX(),
-                inputFilter.accelerationY(),
-
-                OdoMetry.Heading(),
-                inputFilter.headingRate(),
-                inputFilter.headingAcceleration(),
-
-                ShooterTuning.plannerUseTurretRate ? inputFilter.turretRate() : 0
-        );
-
-        long plannerStart = System.nanoTime();
-        Shotplanner.ShotSolution shot = shotPlanner.calculateShot(
-                robot,
-                getHiveTarget(),
-                ShooterTuning.plannerDelaySeconds
-        );
-        plannerMs = (System.nanoTime() - plannerStart) / 1e6;
-        lastShot = shot;
-        lastRobotState = robot;
-
-        Shotplanner.ShotSolution act = solutionHold.apply(shot, OdoMetry.Heading());
-
-        if (act.reachable
-                && Double.isFinite(act.turretAngleDeg)
-                && Double.isFinite(act.launchAngleDeg)
-                && Double.isFinite(act.flywheelRPM)) {
-            targetRPM = act.flywheelRPM;
-            turretController.setTarget(act.turretAngleDeg + ShooterTuning.turretZeroOffsetDeg, 1.0, false);
-            setHoodDegrees(act.launchAngleDeg);
-        } else {
-            turretController.setTarget(getGoalBearingDeg() + ShooterTuning.turretZeroOffsetDeg, 1.0, false);
-        }
-    }
 
     /**
      * REDUCED targeter path: the same turret controller (SetTurretAngle) and flywheel loop as before, with the rpm,

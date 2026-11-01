@@ -12,7 +12,6 @@ import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.Sho
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.ServoSelect;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.TurretDebugMode;
-import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.Shotplanner;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.TurretTune;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.vision.VisionSubsystem;
 import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
@@ -33,7 +32,6 @@ public class Test_tele extends OpModeEX {
     private int velAgree = 0;
     private int velTotal = 0;
 
-    private final TargetingDebugView fieldView = new TargetingDebugView();
     private final ShotHold shotHold = new ShotHold();
     private final ElapsedTime packetTimer = new ElapsedTime();
     private String voltageVerdict = "-";
@@ -191,8 +189,7 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("last move overshoot (deg)", "%.2f", lastOvershoot);
         telemetry.addData("kV estimate (manual)", "%.5f", kVEstimate);
 
-        telemetry.addLine("=== SHOT PLANNER ===");
-        telemetry.addData("goal side (BACK)", shooterController.blueHiveSide);
+        telemetry.addLine("=== FLYWHEEL ===");
         shooterController.manualFlywheelPower = gamepad2.right_trigger;
         telemetry.addData("targeting (dpad up)", shooterController.targeting);
         telemetry.addData("manual flywheel (gamepad2 R-trigger)", "%.2f  raw %.0f ticks/s", shooterController.manualFlywheelPower,
@@ -202,30 +199,6 @@ public class Test_tele extends OpModeEX {
                 shooterController.flywheelReady() ? "READY" : "");
         if (shooterController.flywheelReady() && shooterController.flywheelPower > 0.05) {
             telemetry.addData("kF if steady", "%.6f", shooterController.flywheelPower / shooterController.getTargetRPM());
-        }
-        Shotplanner.ShotSolution shot = shooterController.lastShot;
-        if (shot != null) {
-            telemetry.addData("reachable / safe", shot.reachable + " / " + shot.safe);
-            if (!shot.reachable) {
-                telemetry.addData("NO SHOT because", shot.failureReason);
-            }
-            telemetry.addData("turret angle cmd", flagNaN(shot.turretAngleDeg));
-            telemetry.addData("launch angle / hood from vertical", "%s / %.1f", flagNaN(shot.launchAngleDeg), 90 - shot.launchAngleDeg);
-            telemetry.addData("target RPM", flagNaN(shot.flywheelRPM));
-            telemetry.addData("clearance (m)", "%.3f", shot.minimumClearanceMeters);
-            telemetry.addData("planner time (ms)", "%.1f", shooterController.plannerMs);
-
-            Shotplanner.HiveTarget hive = Shotplanner.getBlueHiveTarget(shooterController.blueHiveSide);
-            double bearing = Math.toDegrees(Math.atan2(hive.openingY - odometry.Y() / 100, hive.openingX - odometry.X() / 100));
-            telemetry.addData("geometric bearing (deg)", "%.1f", normalize(bearing - odometry.Heading()));
-        }
-        Shotplanner.RobotState rs = shooterController.lastRobotState;
-        if (rs != null) {
-            telemetry.addData("planner in: x,y (m)", "%.2f, %.2f", rs.x, rs.y);
-            telemetry.addData("planner in: vx,vy (m/s)", "%.2f, %.2f", rs.velocityX, rs.velocityY);
-            telemetry.addData("planner in: ax,ay (m/s2)", "%.2f, %.2f", rs.accelerationX, rs.accelerationY);
-            telemetry.addData("planner in: heading / omega", "%.1f deg / %.3f deg/s", rs.headingDeg, rs.angularVelocityDegPerSec);
-            telemetry.addData("planner in: turret omega", flagNaN(rs.turretAngularVelocityDegPerSec));
         }
         reducedShotControls();
         reducedShotTelemetry();
@@ -237,17 +210,13 @@ public class Test_tele extends OpModeEX {
     }
 
     /**
-     * Under-shooter REDUCED shot control (ShotControlTuning, OFF by default), gamepad2:
-     * Y toggles it, dpad up/down = exit-speed trim +-, dpad left/right = turret trim -/+, BACK clears the trims,
+     * Under-shooter REDUCED shot control (ShotControlTuning, always on), gamepad2:
+     * dpad up/down = exit-speed trim +-, dpad left/right = turret trim -/+, BACK clears the trims,
      * X reloads the model files, START saves ShotControlTuning (not 'enabled': it always starts OFF),
      * A opens a fire-gate request window (gateWindowS), LEFT BUMPER toggles MOVEMENT PROTECTION (settle gate) ON/OFF
      * (default ON; always starts ON), B (hold) = feed override. gamepad1 LEFT BUMPER feeds: held until the gate says FIRE.
      */
     private void reducedShotControls() {
-        if (!lastGamepad2.y && currentGamepad2.y) {
-            ShotControlTuning.enabled = !ShotControlTuning.enabled;
-            if (ShotControlTuning.enabled && !shooterController.reduced.hasModel()) shooterController.loadReducedModel();
-        }
         if (!lastGamepad2.dpad_up && currentGamepad2.dpad_up) ShotControlTuning.speedTrimPct += ShotControlTuning.speedTrimStepPct;
         if (!lastGamepad2.dpad_down && currentGamepad2.dpad_down) ShotControlTuning.speedTrimPct -= ShotControlTuning.speedTrimStepPct;
         if (!lastGamepad2.dpad_right && currentGamepad2.dpad_right) ShotControlTuning.turretTrimDeg += ShotControlTuning.turretTrimStepDeg;
@@ -274,9 +243,8 @@ public class Test_tele extends OpModeEX {
 
     private void reducedShotTelemetry() {
         ReducedShotController r = shooterController.reduced;
-        telemetry.addLine("=== REDUCED SHOT CONTROL (gamepad2 Y) ===");
-        telemetry.addData("enabled / active", "%s / %s  (%s alliance)", ShotControlTuning.enabled,
-                shooterController.reducedActive, ShotControlTuning.blueAlliance ? "BLUE" : "RED");
+        telemetry.addLine("=== REDUCED SHOT CONTROL ===");
+        telemetry.addData("active", "%s  (%s alliance)", shooterController.reducedActive, ShotControlTuning.blueAlliance ? "BLUE" : "RED");
         telemetry.addData("model", shooterController.reducedStatus);
         if (!r.hasModel()) return;
         telemetry.addData("aim: team x,y,h", "%.1f, %.1f in, %.1f deg  d %.1f in", r.teamX, r.teamY, r.teamHeading, r.result.d);
@@ -315,12 +283,6 @@ public class Test_tele extends OpModeEX {
                     options[(shooterController.manualServoSelect.ordinal() + 1) % options.length];
         }
 
-        if (!lastGamepad1.back && currentGamepad1.back) {
-            shooterController.blueHiveSide =
-                    shooterController.blueHiveSide == Shotplanner.BlueHiveSide.AUDIENCE
-                            ? Shotplanner.BlueHiveSide.OPPOSITE
-                            : Shotplanner.BlueHiveSide.AUDIENCE;
-        }
 
         if (!lastGamepad1.left_stick_button && currentGamepad1.left_stick_button) {
             TurretTune tune = TurretTuning.toTune();

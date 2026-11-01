@@ -25,17 +25,11 @@ public class ShooterTuning {
 
     // Bumped when defaults change meaning; values listed in RESET_ON_UPGRADE are then taken from the new defaults.
     private static final String SETTINGS_VERSION = "2";
-    private static final String[] RESET_ON_UPGRADE = {"flywheelTicksPerRev", "magnusK", "muzzleEfficiency", "flywheelKF"};
+    private static final String[] RESET_ON_UPGRADE = {"flywheelTicksPerRev", "flywheelKF"};
 
-    // Shot physics
-    // Counter roller cancels the spin, so no Magnus lift; ball speed is about the wheel's surface speed
-    public static double flywheelRadiusMeters = 0.036;
-    public static double muzzleEfficiency = 1.0;
-    public static double magnusK = 0.0;
-    public static double maxFlywheelRPM = 6000;
-    public static double requiredClearanceMeters = 0.025;
-    public static double muzzleHeightMeters = 0.32;
-    public static double turretAxisForwardMeters = 0;
+    // The old Shotplanner's shot physics, hood launch-angle mapping and goal positions are deleted: the reduced model
+    // (ShotControlTuning) owns the goal, the hood (hoodServoPosAtZero / AtMax) and the rpm.
+    public static double turretAxisForwardMeters = 0.1;
     // Sideways offset of the turret axis from the odometry point. Positive is toward the side heading increases toward.
     public static double turretAxisSidewaysMeters = 0.0;
     // true = the program ASSUMES the turret points exactly straight forward when it starts (INIT and again at PLAY): the encoder
@@ -43,32 +37,13 @@ public class ShooterTuning {
     public static boolean assumeTurretForwardAtStart = true;
     // Turret encoder reading when the turret really points straight ahead (only used when assumeTurretForwardAtStart is false)
     public static double turretZeroOffsetDeg = 0.0;
-    public static double muzzleForwardFromTurretMeters = 0.0;
-    public static double plannerDelaySeconds = 0.10;
-    public static double plannerPeriodMs = 50;
 
-    // Planner input cleaning: velocities are smoothed, and acceleration is off because it is differentiated noise
+    // Motion input cleaning for the shot controller: velocities are smoothed, acceleration is off (differentiated noise)
     public static double plannerVelocityFilterSeconds = 0.06;
     public static double plannerVelocityDeadbandMps = 0.02;
     public static double plannerHeadingRateDeadbandDps = 2.0;
     public static double plannerTurretRateDeadbandDps = 5.0;
     public static boolean plannerUseAcceleration = false;
-    public static boolean plannerUseTurretRate = false;
-    public static double plannerHoldSolves = 4;
-
-    // Hood: two measured points (servo degrees -> launch angle above horizontal) define the whole mapping.
-    // The hood is 15-45 deg from vertical, so the launch angle is 90 minus that: 75 down to 45.
-    public static double hoodServoAtMinDeg = 0;
-    public static double hoodServoAtMaxDeg = 253;
-    public static double hoodLaunchAtMinDeg = 75;
-    public static double hoodLaunchAtMaxDeg = 45;
-
-    // Goal, field metres
-    public static double audienceGoalX = 1.22;
-    public static double audienceGoalY = 2.15;
-    public static double oppositeGoalX = 2.44;
-    public static double oppositeGoalY = 2.15;
-    public static double openingBottomZ = 1.36;
 
     // Flywheel: power = kF * targetRPM + kP * error + integral(kI * error)
     // 1:1 goBILDA 6000 rpm motor is 28 ticks per rev. Check: full power with no load should read about 5800-6000 rpm.
@@ -82,17 +57,10 @@ public class ShooterTuning {
     public static double flywheelRpmFilter = 0.3;
     public static double flywheelReadyPercent = 3.0;
 
-    // Start pose used by Test_tele at init and by its set-pose button (cm, degrees)
-    public static double startXcm = 21;
-    public static double startYcm = 348;
+    // Start pose used by Test_tele / Shot Tuner at init and by their set-pose button (cm, degrees)
+    public static double startXcm = 0;
+    public static double startYcm = 0;
     public static double startHeadingDeg = 0;
-
-    // Dashboard field view
-    public static boolean fieldView = true;
-    public static double fieldViewRotationDeg = 0;
-    public static boolean fieldViewFlipY = false;
-    public static double mapCellMeters = 0.3;
-    public static double robotSizeMeters = 0.4;
 
     private static boolean tunable(Field f) {
         int m = f.getModifiers();

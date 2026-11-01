@@ -87,7 +87,6 @@ public class ShotTuner extends OpModeEX {
     @Override
     public void initEX() {
         dash = FtcDashboard.getInstance().getTelemetry();
-        ShotControlTuning.enabled = true;          // this OpMode is about the reduced controller
         ShotControlTuning.gateProtect = true;      // protection always starts ON
         if (!shooterController.reduced.hasModel()) shooterController.loadReducedModel();
         shooterController.targeting = true;
@@ -323,7 +322,7 @@ public class ShotTuner extends OpModeEX {
         put("yaw rate / limit", f("%.0f / %.0f deg/s", odometry.getHeadingVelocityDeg(), ShotControlTuning.gateOmegaMaxDps));
         put("claim P / feasible / best ahead", f("%.3f / %s / %.3f", r.feasible ? r.pMake : 0.0, r.feasible, r.gateBestAhead));
         put("range (pivot->aim) / hood / turret cmd", f("%.1f in / %.3f deg / %.1f deg", r.result.d, r.hoodDeg, r.turretJavaDeg));
-        put("controller", f("enabled %s active %s targeting %s  %s", ShotControlTuning.enabled, shooterController.reducedActive,
+        put("controller", f("active %s targeting %s  %s", shooterController.reducedActive,
                 shooterController.targeting, shooterController.reducedStatus));
         put("trims speed % / turret deg", f("%.1f / %.1f", ShotControlTuning.speedTrimPct, ShotControlTuning.turretTrimDeg));
         if (CAMPAIGN_ON) {
