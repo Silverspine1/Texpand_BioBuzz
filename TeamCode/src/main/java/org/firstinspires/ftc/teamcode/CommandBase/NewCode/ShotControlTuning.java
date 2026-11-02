@@ -5,13 +5,7 @@ import com.acmerobotics.dashboard.config.Config;
 import org.firstinspires.ftc.robotcore.internal.system.AppUtil;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 import java.util.Properties;
 
 /**
@@ -155,63 +149,54 @@ public class ShotControlTuning {
     public static double detectMinDropRpm = 40.0;
     public static double burstResetS = 0.8;
 
-    private static boolean tunable(Field f) {
-        int m = f.getModifiers();
-        return Modifier.isPublic(m) && Modifier.isStatic(m) && !Modifier.isFinal(m)
-                && (f.getType() == double.class || f.getType() == boolean.class || f.getType() == String.class);
-    }
+    // Not restored from the saved file: the new controller always starts OFF, the movement protection always starts ON, the hood
+    // debug always starts OFF (and its position is only a scratch value).
+    private static final String[] NOT_RESTORED = {"enabled", "gateProtect", "hoodDebug", "hoodDebugPos"};
 
-    public static void save() throws IOException {
-        Properties p = new Properties();
-        for (Field f : ShotControlTuning.class.getDeclaredFields()) {
-            if (!tunable(f)) continue;
-            try {
-                p.setProperty(f.getName(), String.valueOf(f.get(null)));
-            } catch (IllegalAccessException ignored) {
-            }
-        }
+    private static String loadStatus = "shot_control: not loaded yet";
+    private static String saveStatus = "nothing saved yet";
+
+    /** Saves ShotControlTuning (shot_control.properties); the file is read back and compared. Returns the count written. */
+    public static int save() throws IOException {
         File file = AppUtil.getInstance().getSettingsFile(FILE_NAME);
-        File parent = file.getParentFile();
-        if (parent != null && !parent.exists() && !parent.mkdirs()) {
-            throw new IOException("Could not create " + parent);
-        }
-        try (OutputStream out = new FileOutputStream(file)) {
-            p.store(out, "Shot control tune");
+        int n = TuningIO.save(ShotControlTuning.class, file, "Shot control tune", true, null);
+        saveStatus = "shot_control: wrote " + n + " values to " + file.getPath() + " (read back OK)";
+        return n;
+    }
+
+    /**
+     * THE save: ShotControlTuning + ShooterTuning (start pose, turret axis, flywheel gains). Returns the text for the display;
+     * it says SAVE FAILED with the reason when either file could not be written or read back.
+     */
+    public static String saveAll() {
+        try {
+            ShooterTuning.save();
+            save();
+            return "SAVED. " + saveStatus + " | " + ShooterTuning.saveStatus();
+        } catch (Throwable t) {
+            saveStatus = "SAVE FAILED: " + t.getMessage();
+            return saveStatus;
         }
     }
 
-    /** Loads saved values over the defaults (enabled and gateProtect are NOT restored: the new controller always
-     *  starts OFF and the movement protection always starts ON). */
+    /** What the last load / save did, for the top of every display (so you can see the hub really has your numbers). */
+    public static String settingsLine() {
+        return loadStatus + " | " + ShooterTuning.loadStatus() + " | last save: " + saveStatus;
+    }
+
+    /** Loads saved values over the defaults (see NOT_RESTORED). Returns how many were applied; the details are in settingsLine(). */
     public static int load() {
         try {
             File file = AppUtil.getInstance().getSettingsFile(FILE_NAME);
-            if (!file.exists()) return 0;
-            Properties p = new Properties();
-            try (InputStream in = new FileInputStream(file)) {
-                p.load(in);
+            if (!file.exists()) {
+                loadStatus = "shot_control: no saved file (" + file.getPath() + ") -> built-in defaults";
+                return 0;
             }
-            int applied = 0;
-            for (Field f : ShotControlTuning.class.getDeclaredFields()) {
-                if (!tunable(f) || f.getName().equals("enabled") || f.getName().equals("gateProtect")
-                        || f.getName().equals("hoodDebug")) continue;
-                String text = p.getProperty(f.getName());
-                if (text == null) continue;
-                try {
-                    if (f.getType() == boolean.class) {
-                        f.setBoolean(null, Boolean.parseBoolean(text));
-                    } else if (f.getType() == String.class) {
-                        f.set(null, text.trim());
-                    } else {
-                        double value = Double.parseDouble(text);
-                        if (Double.isNaN(value) || Double.isInfinite(value)) continue;
-                        f.setDouble(null, value);
-                    }
-                    applied++;
-                } catch (IllegalAccessException | NumberFormatException ignored) {
-                }
-            }
-            return applied;
+            TuningIO.Loaded r = TuningIO.load(ShotControlTuning.class, TuningIO.read(file), true, NOT_RESTORED, new String[0], false);
+            loadStatus = TuningIO.describe("shot_control", file, r);
+            return r.applied;
         } catch (Throwable t) {
+            loadStatus = "shot_control: LOAD FAILED (" + t + ") -> built-in defaults";
             return 0;
         }
     }

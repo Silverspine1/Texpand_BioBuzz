@@ -84,6 +84,7 @@ public class ShotTuner extends OpModeEX {
         put("ALLIANCE", (ShotControlTuning.blueAlliance ? "BLUE" : "RED") + "  (gamepad2 RIGHT BUMPER switches it here in INIT; START saves after PLAY)");
         ShotDebug.pose(odometry, shooterController, this::put);
         put("model", shooterController.reducedStatus);
+        put("SETTINGS", ShotControlTuning.settingsLine());
         put("battery", f("%.2f V", shooterController.batteryVolts));
         put("log", logStatus);
         dash.update();
@@ -177,14 +178,7 @@ public class ShotTuner extends OpModeEX {
             status = "field-tune " + (ShotControlTuning.useFieldTune ? "ON " : "OFF ") + ShotControlTuning.fieldTuneFile
                     + " -> " + shooterController.reducedStatus;
         }
-        if (!lastGamepad2.start && currentGamepad2.start) {
-            try {
-                ShotControlTuning.save();
-                status = "saved shot_control.properties";
-            } catch (Exception e) {
-                status = "save failed: " + e.getMessage();
-            }
-        }
+        if (!lastGamepad2.start && currentGamepad2.start) status = ShotControlTuning.saveAll();
 
         telemetryBlock(r, now, applicable);
         dash.update();
@@ -309,6 +303,7 @@ public class ShotTuner extends OpModeEX {
 
     private void telemetryBlock(ReducedShotController r, double now, boolean applicable) {
         put("HOOD", shooterController.hoodStatusLine());
+        put("SETTINGS", ShotControlTuning.settingsLine());
         put("DRIVE", ShotControlTuning.fieldCentricDrive ? "FIELD-CENTRIC (gamepad1 BACK = robot-centric)" : "ROBOT-CENTRIC (gamepad1 BACK = field-centric)");
         say("TUNE: " + ShotControlTuning.tuneLine());
         say(ShotControlTuning.gateProtect

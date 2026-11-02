@@ -5,13 +5,7 @@ import com.acmerobotics.dashboard.config.Config;
 import org.firstinspires.ftc.robotcore.internal.system.AppUtil;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
 import java.util.Properties;
 
 /**
@@ -63,65 +57,36 @@ public class ShooterTuning {
     public static double startYcm = 0;
     public static double startHeadingDeg = 0;
 
-    private static boolean tunable(Field f) {
-        int m = f.getModifiers();
-        return Modifier.isPublic(m) && Modifier.isStatic(m) && !Modifier.isFinal(m)
-                && (f.getType() == double.class || f.getType() == boolean.class);
-    }
+    private static String loadStatus = "shooter: not loaded yet";
+    private static String saveStatus = "shooter: not saved yet";
 
-    public static void save() throws IOException {
-        Properties p = new Properties();
-        p.setProperty("settingsVersion", SETTINGS_VERSION);
-        for (Field f : ShooterTuning.class.getDeclaredFields()) {
-            if (!tunable(f)) continue;
-            try {
-                p.setProperty(f.getName(), String.valueOf(f.get(null)));
-            } catch (IllegalAccessException ignored) {
-            }
-        }
+    static String loadStatus() { return loadStatus; }
 
+    static String saveStatus() { return saveStatus; }
+
+    /** Saves ShooterTuning (shooter_tune.properties); the file is read back and compared. */
+    public static int save() throws IOException {
         File file = AppUtil.getInstance().getSettingsFile(FILE_NAME);
-        File parent = file.getParentFile();
-        if (parent != null && !parent.exists() && !parent.mkdirs()) {
-            throw new IOException("Could not create " + parent);
-        }
-        try (OutputStream out = new FileOutputStream(file)) {
-            p.store(out, "Shooter tune");
-        }
+        int n = TuningIO.save(ShooterTuning.class, file, "Shooter tune", false, SETTINGS_VERSION);
+        saveStatus = "shooter: wrote " + n + " values to " + file.getPath() + " (read back OK)";
+        return n;
     }
 
-    /** Loads any saved values over the defaults. Returns how many were applied. */
+    /** Loads any saved values over the defaults. Returns how many were applied; the details are in ShotControlTuning.settingsLine(). */
     public static int load() {
         try {
             File file = AppUtil.getInstance().getSettingsFile(FILE_NAME);
-            if (!file.exists()) return 0;
-
-            Properties p = new Properties();
-            try (InputStream in = new FileInputStream(file)) {
-                p.load(in);
+            if (!file.exists()) {
+                loadStatus = "shooter: no saved file (" + file.getPath() + ") -> built-in defaults";
+                return 0;
             }
-
+            Properties p = TuningIO.read(file);
             boolean upgraded = !SETTINGS_VERSION.equals(p.getProperty("settingsVersion"));
-            int applied = 0;
-            for (Field f : ShooterTuning.class.getDeclaredFields()) {
-                if (!tunable(f)) continue;
-                if (upgraded && java.util.Arrays.asList(RESET_ON_UPGRADE).contains(f.getName())) continue;
-                String text = p.getProperty(f.getName());
-                if (text == null) continue;
-                try {
-                    if (f.getType() == boolean.class) {
-                        f.setBoolean(null, Boolean.parseBoolean(text));
-                    } else {
-                        double value = Double.parseDouble(text);
-                        if (!Double.isFinite(value)) continue;
-                        f.setDouble(null, value);
-                    }
-                    applied++;
-                } catch (IllegalAccessException | NumberFormatException ignored) {
-                }
-            }
-            return applied;
+            TuningIO.Loaded r = TuningIO.load(ShooterTuning.class, p, false, new String[0], RESET_ON_UPGRADE, upgraded);
+            loadStatus = TuningIO.describe("shooter", file, r);
+            return r.applied;
         } catch (Throwable t) {
+            loadStatus = "shooter: LOAD FAILED (" + t + ") -> built-in defaults";
             return 0;
         }
     }

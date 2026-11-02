@@ -161,6 +161,7 @@ public class Test_tele extends OpModeEX {
         // gamepad2 RIGHT BUMPER: alliance RED / BLUE (the goal it aims at; START saves)
         if (!lastGamepad2.right_bumper && currentGamepad2.right_bumper) ShotControlTuning.blueAlliance = !ShotControlTuning.blueAlliance;
         telemetry.addData("HOOD", shooterController.hoodStatusLine());
+        telemetry.addData("SETTINGS", ShotControlTuning.settingsLine());
         telemetry.addData("DRIVE", ShotControlTuning.fieldCentricDrive ? "FIELD-CENTRIC (gamepad1 BACK = robot-centric)" : "ROBOT-CENTRIC (gamepad1 BACK = field-centric)");
         telemetry.addData("ALLIANCE", "%s  (gamepad2 RIGHT BUMPER switches, START saves). Wrong alliance = aims at the other goal, hood stays down",
                 ShotControlTuning.blueAlliance ? "BLUE" : "RED");
@@ -199,7 +200,7 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("ctrl error (deg)", "%.2f", turret.getPositionError());
         telemetry.addData("ctrl output", flagNaN(turret.getOutput()));
         telemetry.addData("ctrl servo cmd", flagNaN(turret.getServoCommand()));
-        telemetry.addData("tune (L-stick btn saves both)", tuneStatus);
+        telemetry.addData("tune (gamepad2 START or L-stick btn saves everything)", tuneStatus);
         telemetry.addData("ping-pong (A)", pingPong);
         telemetry.addData("last move settle (s)", "%.2f", lastSettleTime);
         telemetry.addData("last move overshoot (deg)", "%.2f", lastOvershoot);
@@ -248,17 +249,27 @@ public class Test_tele extends OpModeEX {
         }
         if (!lastGamepad2.a && currentGamepad2.a) shooterController.requestReducedShot();
         if (!lastGamepad2.left_bumper && currentGamepad2.left_bumper) ShotControlTuning.gateProtect = !ShotControlTuning.gateProtect;
-        if (!lastGamepad2.start && currentGamepad2.start) {
-            try {
-                ShotControlTuning.save();
-                reducedSaveStatus = "saved";
-            } catch (Exception e) {
-                reducedSaveStatus = "save failed: " + e.getMessage();
-            }
-        }
+        if (!lastGamepad2.start && currentGamepad2.start) reducedSaveStatus = saveEverything();
     }
 
     private String reducedSaveStatus = "";
+
+    /** THE save (gamepad2 START or gamepad1 left stick click): shot control + shooter values + the turret tune, read back. */
+    private String saveEverything() {
+        String turret;
+        TurretTune tune = TurretTuning.toTune();
+        if (!tune.isValid()) {
+            turret = "turret tune NOT saved (values invalid)";
+        } else {
+            try {
+                tune.save();
+                turret = "turret tune saved";
+            } catch (Exception e) {
+                turret = "turret tune SAVE FAILED: " + e.getMessage();
+            }
+        }
+        return ShotControlTuning.saveAll() + " | " + turret;
+    }
 
     private void reducedShotTelemetry() {
         ReducedShotController r = shooterController.reduced;
@@ -302,20 +313,7 @@ public class Test_tele extends OpModeEX {
         }
 
 
-        if (!lastGamepad1.left_stick_button && currentGamepad1.left_stick_button) {
-            TurretTune tune = TurretTuning.toTune();
-            if (!tune.isValid()) {
-                tuneStatus = "NOT SAVED: values invalid";
-            } else {
-                try {
-                    tune.save();
-                    ShooterTuning.save();
-                    tuneStatus = "saved turret + shooter";
-                } catch (Exception e) {
-                    tuneStatus = "SAVE FAILED: " + e.getMessage();
-                }
-            }
-        }
+        if (!lastGamepad1.left_stick_button && currentGamepad1.left_stick_button) tuneStatus = saveEverything();
 
         if (!lastGamepad1.right_stick_button && currentGamepad1.right_stick_button) {
             odometry.setPose(ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg);
