@@ -158,70 +158,73 @@ public class Test_tele extends OpModeEX {
         checkVelocityAgreement(encoder);
         checkHeadingDirection();
 
-        // gamepad2 RIGHT BUMPER: alliance RED / BLUE (the goal it aims at; START saves)
+        // gamepad2 RIGHT BUMPER: alliance RED / BLUE (which close goal cell it aims at, and the field-centric drive direction)
         if (!lastGamepad2.right_bumper && currentGamepad2.right_bumper) ShotControlTuning.blueAlliance = !ShotControlTuning.blueAlliance;
-        telemetry.addData("HOOD", shooterController.hoodStatusLine());
-        telemetry.addData("SETTINGS", ShotControlTuning.settingsLine());
-        telemetry.addData("DRIVE", ShotControlTuning.fieldCentricDrive ? "FIELD-CENTRIC (gamepad1 BACK = robot-centric)" : "ROBOT-CENTRIC (gamepad1 BACK = field-centric)");
-        telemetry.addData("ALLIANCE", "%s  (gamepad2 RIGHT BUMPER switches, START saves). Wrong alliance = aims at the other goal, hood stays down",
-                ShotControlTuning.blueAlliance ? "BLUE" : "RED");
-        telemetry.addData("TUNE", "%s  %s", ShotControlTuning.tuneLine(), reducedSaveStatus);
-        telemetry.addData("START POSE", "gamepad1 RIGHT STICK CLICK sets %.0f, %.0f cm @ %.0f deg  %s",
-                ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg, poseStatus);
-        telemetry.addLine("=== ODOMETRY ===");
-        telemetry.addData("X / Y (cm)", "%.1f / %.1f", odometry.X(), odometry.Y());
-        telemetry.addData("H (deg)", "%.1f", odometry.Heading());
-        telemetry.addData("XVel / YVel (cm/s)", "%.1f / %.1f", odometry.getXVelocity(), odometry.getYVelocity());
-        telemetry.addData("heading vel (deg/s)", "%.1f", odometry.getHeadingVelocityDeg());
-        telemetry.addData("Heading dir check", headingVerdict);
-        telemetry.addData("pose (R-stick btn sets)", "%.0f, %.0f cm @ %.0f deg  %s",
-                ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg, poseStatus);
-
-        ShotDebug.pose(odometry, shooterController, telemetry::addData);
-        vision.addTelemetry(telemetry);
-
-        telemetry.addLine("=== TURRET ENCODER ===");
-        telemetry.addData("voltage (V)", "%.3f", encoder.getVoltage());
-        telemetry.addData("raw servo deg", "%.1f", encoder.getRawDegrees());
-        telemetry.addData("total servo deg", "%.1f", encoder.getTotalPosition());
-        telemetry.addData("turret angle (deg)", "%.2f", encoder.getTurretAngle());
-        telemetry.addData("turret velocity (deg/s)", flagNaN(encoder.getVelocity()));
-        telemetry.addData("velocity vs angle change", encoderVelVerdict);
-        telemetry.addData("voltage vs angle", voltageVerdict);
-
-        telemetry.addLine("=== TURRET SERVOS ===");
-        telemetry.addData("debug mode", shooterController.turretDebugMode);
-        telemetry.addData("servo select", shooterController.manualServoSelect);
-        telemetry.addData("manual power", "%.2f  (servo cmd %.2f)", shooterController.manualTurretPower, 0.5 + shooterController.manualTurretPower);
-        telemetry.addData("DIRECTION", turretDirectionVerdict);
-        telemetry.addData("ctrl active / atTarget", turret.isActive() + " / " + turret.atTarget());
-        telemetry.addData("ctrl target (deg)", "%.1f", turret.getTargetPosition());
-        telemetry.addData("ctrl profile pos/vel", "%.1f / %.1f", turret.getProfilePosition(), turret.getProfileVelocity());
-        telemetry.addData("ctrl error (deg)", "%.2f", turret.getPositionError());
-        telemetry.addData("ctrl output", flagNaN(turret.getOutput()));
-        telemetry.addData("ctrl servo cmd", flagNaN(turret.getServoCommand()));
-        telemetry.addData("tune (gamepad2 START or L-stick btn saves everything)", tuneStatus);
-        telemetry.addData("ping-pong (A)", pingPong);
-        telemetry.addData("last move settle (s)", "%.2f", lastSettleTime);
-        telemetry.addData("last move overshoot (deg)", "%.2f", lastOvershoot);
-        telemetry.addData("kV estimate (manual)", "%.5f", kVEstimate);
-
-        telemetry.addLine("=== FLYWHEEL ===");
+        // gamepad2 LEFT STICK CLICK: the detailed turret / encoder / flywheel screens on or off
+        if (!lastGamepad2.left_stick_button && currentGamepad2.left_stick_button) detailed = !detailed;
         shooterController.manualFlywheelPower = gamepad2.right_trigger;
-        telemetry.addData("targeting (dpad up)", shooterController.targeting);
-        telemetry.addData("manual flywheel (gamepad2 R-trigger)", "%.2f  raw %.0f ticks/s", shooterController.manualFlywheelPower,
-                shooterController.flywheelTicksPerSecond);
-        telemetry.addData("flywheel RPM / target", "%.0f / %.0f  power %.2f  %s", shooterController.RPM,
-                shooterController.getTargetRPM(), shooterController.flywheelPower,
-                shooterController.flywheelReady() ? "READY" : "");
-        if (shooterController.flywheelReady() && shooterController.flywheelPower > 0.05) {
-            telemetry.addData("kF if steady", "%.6f", shooterController.flywheelPower / shooterController.getTargetRPM());
-        }
         reducedShotControls();
-        reducedShotTelemetry();
-        ShotDebug.flywheel(shooterController, telemetry::addData);
-        loop = Loop.milliseconds();
-        telemetry.addData("loot time(ms)", "%.1f", loop);
+
+        // ---- what is shown: the few shooting lines, the detailed screens only on request, the GOAL block ALWAYS last ----
+        ShotDebug.compact(odometry, shooterController, ShotHold.TEXT[shotHold.state],
+                (reducedSaveStatus + "  " + poseStatus).trim(), telemetry::addData);
+        telemetry.addData("drive", (ShotControlTuning.fieldCentricDrive ? "FIELD-CENTRIC" : "ROBOT-CENTRIC") + " (gamepad1 BACK toggles)   alliance "
+                + (ShotControlTuning.blueAlliance ? "BLUE" : "RED") + " (gamepad2 right bumper)");
+        if (!detailed) {
+            telemetry.addData("more", "gamepad2 LEFT STICK CLICK = detailed turret / encoder / flywheel screens");
+        } else {
+            telemetry.addData("SETTINGS", ShotControlTuning.settingsLine());
+            telemetry.addData("TUNE", ShotControlTuning.tuneLine());
+            telemetry.addData("START POSE", "gamepad1 RIGHT STICK CLICK sets %.0f, %.0f cm @ %.0f deg  %s",
+                    ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg, poseStatus);
+            telemetry.addLine("=== ODOMETRY ===");
+            telemetry.addData("X / Y (cm)", "%.1f / %.1f", odometry.X(), odometry.Y());
+            telemetry.addData("H (deg)", "%.1f", odometry.Heading());
+            telemetry.addData("XVel / YVel (cm/s)", "%.1f / %.1f", odometry.getXVelocity(), odometry.getYVelocity());
+            telemetry.addData("heading vel (deg/s)", "%.1f", odometry.getHeadingVelocityDeg());
+            telemetry.addData("Heading dir check", headingVerdict);
+
+            ShotDebug.pose(odometry, shooterController, telemetry::addData);
+            vision.addTelemetry(telemetry);
+
+            telemetry.addLine("=== TURRET ENCODER ===");
+            telemetry.addData("voltage (V)", "%.3f", encoder.getVoltage());
+            telemetry.addData("raw servo deg", "%.1f", encoder.getRawDegrees());
+            telemetry.addData("total servo deg", "%.1f", encoder.getTotalPosition());
+            telemetry.addData("turret angle (deg)", "%.2f", encoder.getTurretAngle());
+            telemetry.addData("turret velocity (deg/s)", flagNaN(encoder.getVelocity()));
+            telemetry.addData("velocity vs angle change", encoderVelVerdict);
+            telemetry.addData("voltage vs angle", voltageVerdict);
+
+            telemetry.addLine("=== TURRET SERVOS ===");
+            telemetry.addData("debug mode", shooterController.turretDebugMode);
+            telemetry.addData("servo select", shooterController.manualServoSelect);
+            telemetry.addData("manual power", "%.2f  (servo cmd %.2f)", shooterController.manualTurretPower, 0.5 + shooterController.manualTurretPower);
+            telemetry.addData("DIRECTION", turretDirectionVerdict);
+            telemetry.addData("ctrl active / atTarget", turret.isActive() + " / " + turret.atTarget());
+            telemetry.addData("ctrl target (deg)", "%.1f", turret.getTargetPosition());
+            telemetry.addData("ctrl profile pos/vel", "%.1f / %.1f", turret.getProfilePosition(), turret.getProfileVelocity());
+            telemetry.addData("ctrl error (deg)", "%.2f", turret.getPositionError());
+            telemetry.addData("ctrl output", flagNaN(turret.getOutput()));
+            telemetry.addData("ctrl servo cmd", flagNaN(turret.getServoCommand()));
+            telemetry.addData("tune (gamepad2 START or L-stick btn saves everything)", tuneStatus);
+            telemetry.addData("ping-pong (A)", pingPong);
+            telemetry.addData("last move settle (s)", "%.2f", lastSettleTime);
+            telemetry.addData("last move overshoot (deg)", "%.2f", lastOvershoot);
+            telemetry.addData("kV estimate (manual)", "%.5f", kVEstimate);
+
+            telemetry.addLine("=== FLYWHEEL ===");
+            telemetry.addData("manual flywheel (gamepad2 R-trigger)", "%.2f  raw %.0f ticks/s", shooterController.manualFlywheelPower,
+                    shooterController.flywheelTicksPerSecond);
+            if (shooterController.flywheelReady() && shooterController.flywheelPower > 0.05) {
+                telemetry.addData("kF if steady", "%.6f", shooterController.flywheelPower / shooterController.getTargetRPM());
+            }
+            reducedShotTelemetry();
+            ShotDebug.flywheel(shooterController, telemetry::addData);
+            loop = Loop.milliseconds();
+            telemetry.addData("loop time (ms)", "%.1f", loop);
+        }
+        ShotDebug.goalBlock(shooterController, telemetry::addData);
 
 
     }
@@ -237,22 +240,13 @@ public class Test_tele extends OpModeEX {
         String trim = ShotControlTuning.trimButtons(currentGamepad2, lastGamepad2);
         if (trim != null) reducedSaveStatus = trim + " (START saves)";
         if (!lastGamepad2.x && currentGamepad2.x) shooterController.loadReducedModel();
-        // GOAL FINDER: trim the turret (D-pad left/right) until the ball lands in the goal, LEFT stick click records the spot;
-        // do it from two spots well apart sideways; RIGHT stick click applies the measured goal (or clears if no solution)
-        if (!lastGamepad2.left_stick_button && currentGamepad2.left_stick_button) shooterController.reduced.recordGoalSpot();
-        if (!lastGamepad2.right_stick_button && currentGamepad2.right_stick_button) {
-            if (shooterController.reduced.applyGoalFound()) {
-                ShotControlTuning.aimShiftFarCm = shooterController.reduced.foundFarCm;
-                ShotControlTuning.aimShiftRightCm = shooterController.reduced.foundRightCm;
-                ShotControlTuning.turretTrimDeg = 0.0;
-            }
-        }
         if (!lastGamepad2.a && currentGamepad2.a) shooterController.requestReducedShot();
         if (!lastGamepad2.left_bumper && currentGamepad2.left_bumper) ShotControlTuning.gateProtect = !ShotControlTuning.gateProtect;
         if (!lastGamepad2.start && currentGamepad2.start) reducedSaveStatus = saveEverything();
     }
 
     private String reducedSaveStatus = "";
+    private boolean detailed = false;
 
     /** THE save (gamepad2 START or gamepad1 left stick click): shot control + shooter values + the turret tune, read back. */
     private String saveEverything() {
@@ -281,7 +275,6 @@ public class Test_tele extends OpModeEX {
         telemetry.addData("aim: vr / vt (in/s)", "%.1f / %.1f", r.result.vr, r.result.vt);
         telemetry.addData("rpm cmd / at release", "%.0f / %.0f  (wheel %.0f)  max %.0f @ %.2f V", r.rpmCmd,
                 r.rpmAtReleaseReal, shooterController.RPM, r.rpmMaxEff, shooterController.batteryVolts);
-        telemetry.addData("GOAL FINDER", shooterController.reduced.goalFinderStatus);
         telemetry.addData("hood cmd (deg travel)", "%.3f  servo pos %.4f  (%s)", r.hoodDeg, shooterController.hoodServoPos,
                 ShotControlTuning.hoodLine());
         telemetry.addData("turret cmd / err (deg)", "%.2f / %.2f  (lead %.2f)", r.turretJavaDeg, r.lastTurretErr, r.result.turretLeadDeg);

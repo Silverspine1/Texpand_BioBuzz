@@ -53,6 +53,9 @@ public final class ReducedTargeter {
     /** Field tuning: the real shooter launches this many degrees STEEPER than the model (exit space, before the inverse;
      *  0 = Python parity). Negative = flatter. */
     public double angleOffsetDeg = 0.0;
+    /** > 0: the hive-occlusion map is the RED goal's; a goal on the other side of the field centre line is its mirror image, so the
+     *  map is read at y -> occMirrorW - y (the field width). 0 = as exported. */
+    public double occMirrorW = 0.0;
 
     // scratch outputs of bicubic() / trilinear() (no allocation)
     private double bv, bdr, bdh;
@@ -368,8 +371,9 @@ public final class ReducedTargeter {
         out.pStay = Double.NaN;
         if (C.hasOcc) {
             // hive occlusion (position-dependent, the aim table cannot see it): un-blocked fraction at the pivot
-            double fOcc = bilinear(C.occX, C.occY, C.occF, qx, qy);
-            double sStay = bilinear(C.occX, C.occY, C.occStay, qx, qy);
+            double qyOcc = occMirrorW > 0.0 ? occMirrorW - qy : qy;
+            double fOcc = bilinear(C.occX, C.occY, C.occF, qx, qyOcc);
+            double sStay = bilinear(C.occX, C.occY, C.occStay, qx, qyOcc);
             out.occF = fOcc;
             out.pStay = p * fOcc * sStay;
             p = p * fOcc;

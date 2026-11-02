@@ -58,29 +58,25 @@ public class ShotControlTuning {
     // Solve period [ms]: the turret was tuned with a 50 ms command period (old planner); the solve itself is ~us.
     public static double solvePeriodMs = 50;
 
-    // ===================== THE TWO FIELD-TUNING VALUES (gamepad2 in Shot Tuner and Test_tele, START saves) =====================
-    // rpmScale: real wheel rpm = model rpm x rpmScale. Shots SHORT at every range -> raise it, LONG at every range -> lower it.
-    //   gamepad2 D-pad UP / DOWN = +/- rpmScaleStep. 0.70 is the starting guess from the first robot test (the model asked
-    //   ~5700 where ~3500-4000 scored); 1.0 = the contact sim as built.
-    public static double rpmScale = 0.70;
-    public static double rpmScaleStep = 0.01;
-    // angleOffsetDeg: the real exit angle minus the model's [deg]. Use it when near and far disagree after rpmScale:
-    //   near LONG + far SHORT -> the real shot is flatter than the model -> DECREASE (D-pad LEFT);
-    //   near SHORT + far LONG -> steeper -> INCREASE (D-pad RIGHT). gamepad2 D-pad LEFT / RIGHT = -/+ angleOffsetStepDeg.
+    // ===================== THE GOAL (gamepad2 in Shot Tuner and Test_tele, START saves) =====================
+    // The goal is the CLOSE (audience-side) cell of your alliance, as a global point in the odometry X / Y frame (origin = the red
+    // audience-left corner, +X = audience wall -> back wall, +Y = to the right seen from the audience = toward blue). The field is
+    // mirror symmetric across the red-blue axis, so the close cell is red 138.5 / 147.1 cm and blue 138.5 / 211.9 cm. The alliance
+    // switch (gamepad2 RIGHT BUMPER) picks which one. Before 2026-11-02 blue was the 180 deg ROTATION of red = the FAR cell, 220.5 / 211.9:
+    // 31 in too deep. The trim below is added to that cell (both axes in global cm); the Dashboard and the display show the sum.
+    public static double goalTrimXcm = 0.0;
+    public static double goalTrimYcm = 0.0;
+    // gamepad2 D-pad: UP / DOWN = goal X +- step (away from / toward the audience wall), RIGHT / LEFT = goal Y +- step (toward blue /
+    // toward red). LEFT TRIGGER held = the coarse step. BACK = trim back to 0.
+    public static double goalStepCm = 1.0;
+    public static double goalStepCoarseCm = 5.0;
+
+    // Dashboard only (no buttons any more). rpmScale: real wheel rpm = model rpm x rpmScale (1.0 = the contact sim as built).
+    // angleOffsetDeg: the real exit angle minus the model's [deg]. Both were tuned on the wrong goal position before 2026-11-02, so
+    // an older saved file does not restore them (settings version 3).
+    public static double rpmScale = 1.0;
     public static double angleOffsetDeg = 0.0;
-    public static double angleOffsetStepDeg = 0.5;
-    // ---- WHERE THE GOAL IS (fan-out misses: far right -> miss right, far left -> miss left, centre fine) ----
-    // Real distance between the INNER faces of two opposite walls [cm], tape measure. The model assumes 359.02 (CAD). The hive
-    // is at the field centre, so a wider field moves the goal (half the difference on each axis) and, for the blue alliance,
-    // the 180 deg mirror of your pose. Do not enter the nominal 365.76 unless the tape says so.
-    public static double fieldWidthCm = 359.02;
-    // Goal position correction [cm] for the AZIMUTH only (the turret bearing; range, rpm and hood are not touched), in YOUR alliance's
-    // frame: Far = farther from the wall you shoot from, Right = to your right when you face the goal. gamepad2 LEFT stick click
-    // (Test_tele) records a spot, RIGHT stick click measures both numbers for you (GOAL FINDER). Typed by hand: -2, -4 ...
-    public static double aimShiftFarCm = 0.0;
-    public static double aimShiftRightCm = 0.0;
-    // Turret angle gain: the commanded turret angle is multiplied by this. Misses that grow with how far the turret has to
-    // turn (also when you only rotate the robot) -> 1.01, 1.02 ... (turret turns less than the encoder says). 1.0 = off.
+    // Turret angle gain: the commanded turret angle is multiplied by this (1.0 = off); only for a turret that turns less than its encoder says.
     public static double turretScale = 1.0;
 
     // gamepad1 BACK toggles. Field-centric: stick UP = away from the driver across the field, whatever the robot's heading.
@@ -90,7 +86,6 @@ public class ShotControlTuning {
     // ==========================================================================================================================
     // Turret aim trim (not a model value): hold gamepad2 LEFT TRIGGER + D-pad LEFT / RIGHT.
     public static double turretTrimDeg = 0.0;
-    public static double turretTrimStepDeg = 0.5;
 
     // Hood: travel 0..6.3 deg (lower stop = 0) -> servo degrees. 48/40 gears: 1.2 servo deg per hood deg. MEASURE.
     public static double hoodServoAtZeroDeg = 0.0;
@@ -152,6 +147,10 @@ public class ShotControlTuning {
     // Not restored from the saved file: the new controller always starts OFF, the movement protection always starts ON, the hood
     // debug always starts OFF (and its position is only a scratch value).
     private static final String[] NOT_RESTORED = {"enabled", "gateProtect", "hoodDebug", "hoodDebugPos"};
+    // Settings version 3 (2026-11-02): the goal is a global point; these were tuned against the old (wrong) blue goal, so a file saved
+    // by an older version does not restore them.
+    private static final String SETTINGS_VERSION = "3";
+    private static final String[] RESET_ON_UPGRADE = {"rpmScale", "angleOffsetDeg", "turretTrimDeg"};
 
     private static String loadStatus = "shot_control: not loaded yet";
     private static String saveStatus = "nothing saved yet";
@@ -159,7 +158,7 @@ public class ShotControlTuning {
     /** Saves ShotControlTuning (shot_control.properties); the file is read back and compared. Returns the count written. */
     public static int save() throws IOException {
         File file = AppUtil.getInstance().getSettingsFile(FILE_NAME);
-        int n = TuningIO.save(ShotControlTuning.class, file, "Shot control tune", true, null);
+        int n = TuningIO.save(ShotControlTuning.class, file, "Shot control tune", true, SETTINGS_VERSION);
         saveStatus = "shot_control: wrote " + n + " values to " + file.getPath() + " (read back OK)";
         return n;
     }
@@ -192,8 +191,11 @@ public class ShotControlTuning {
                 loadStatus = "shot_control: no saved file (" + file.getPath() + ") -> built-in defaults";
                 return 0;
             }
-            TuningIO.Loaded r = TuningIO.load(ShotControlTuning.class, TuningIO.read(file), true, NOT_RESTORED, new String[0], false);
-            loadStatus = TuningIO.describe("shot_control", file, r);
+            java.util.Properties saved = TuningIO.read(file);
+            boolean upgraded = !SETTINGS_VERSION.equals(saved.getProperty("settingsVersion"));
+            TuningIO.Loaded r = TuningIO.load(ShotControlTuning.class, saved, true, NOT_RESTORED, RESET_ON_UPGRADE, upgraded);
+            loadStatus = TuningIO.describe("shot_control", file, r)
+                    + (upgraded ? "  (old file: rpmScale / angleOffsetDeg / turretTrimDeg / goal reset to the defaults)" : "");
             return r.applied;
         } catch (Throwable t) {
             loadStatus = "shot_control: LOAD FAILED (" + t + ") -> built-in defaults";
@@ -203,16 +205,16 @@ public class ShotControlTuning {
 
     /** {@code /sdcard/FIRST/settings/<name>} on the Control Hub. */
     /**
-     * The tuning buttons, the same in every OpMode (gamepad2): D-pad UP/DOWN rpmScale, D-pad LEFT/RIGHT angleOffsetDeg, with
-     * LEFT TRIGGER held D-pad LEFT/RIGHT = turret trim, BACK resets the turret trim. Returns a status text or null.
+     * The tuning buttons, the same in every OpMode (gamepad2): D-pad UP / DOWN = goal X, RIGHT / LEFT = goal Y (LEFT TRIGGER held =
+     * the coarse step), BACK = goal back to the defaults, Y = hood debug on / off (then the D-pad moves the hood servo instead).
+     * Returns a status text or null.
      */
     public static String trimButtons(com.qualcomm.robotcore.hardware.Gamepad cur, com.qualcomm.robotcore.hardware.Gamepad last) {
-        boolean turret = cur.left_trigger > 0.5;
         if (cur.y && !last.y) {                        // HOOD DEBUG on / off
             hoodDebug = !hoodDebug;
             if (hoodDebug) hoodDebugPos = hoodBottomPos;
         }
-        if (hoodDebug) {                               // the other trim buttons are off while it is on
+        if (hoodDebug) {                               // the goal buttons are off while it is on
             if (cur.dpad_up && !last.dpad_up) hoodDebugPos += 0.001;
             if (cur.dpad_down && !last.dpad_down) hoodDebugPos -= 0.001;
             if (cur.dpad_right && !last.dpad_right) hoodDebugPos = hoodTopPos;
@@ -221,18 +223,13 @@ public class ShotControlTuning {
             return String.format(java.util.Locale.US, "HOOD DEBUG ON: servo %.3f  (D-pad up/down +-0.001, right = top %.3f, left = bottom %.3f, gamepad2 Y = off)",
                     hoodDebugPos, hoodTopPos, hoodBottomPos);
         }
+        final double step = cur.left_trigger > 0.5 ? goalStepCoarseCm : goalStepCm;
         String s = null;
-        if (cur.dpad_up && !last.dpad_up) { rpmScale = Math.round((rpmScale + rpmScaleStep) * 1000.0) / 1000.0; s = "rpmScale " + rpmScale; }
-        if (cur.dpad_down && !last.dpad_down) { rpmScale = Math.max(0.3, Math.round((rpmScale - rpmScaleStep) * 1000.0) / 1000.0); s = "rpmScale " + rpmScale; }
-        if (cur.dpad_right && !last.dpad_right) {
-            if (turret) { turretTrimDeg += turretTrimStepDeg; s = "turret trim " + turretTrimDeg; }
-            else { angleOffsetDeg += angleOffsetStepDeg; s = "angleOffset " + angleOffsetDeg; }
-        }
-        if (cur.dpad_left && !last.dpad_left) {
-            if (turret) { turretTrimDeg -= turretTrimStepDeg; s = "turret trim " + turretTrimDeg; }
-            else { angleOffsetDeg -= angleOffsetStepDeg; s = "angleOffset " + angleOffsetDeg; }
-        }
-        if (cur.back && !last.back) { turretTrimDeg = 0.0; s = "turret trim reset"; }
+        if (cur.dpad_up && !last.dpad_up) { goalTrimXcm = round1(goalTrimXcm + step); s = "goal trim X " + goalTrimXcm; }
+        if (cur.dpad_down && !last.dpad_down) { goalTrimXcm = round1(goalTrimXcm - step); s = "goal trim X " + goalTrimXcm; }
+        if (cur.dpad_right && !last.dpad_right) { goalTrimYcm = round1(goalTrimYcm + step); s = "goal trim Y " + goalTrimYcm; }
+        if (cur.dpad_left && !last.dpad_left) { goalTrimYcm = round1(goalTrimYcm - step); s = "goal trim Y " + goalTrimYcm; }
+        if (cur.back && !last.back) { goalTrimXcm = 0.0; goalTrimYcm = 0.0; s = "goal trim reset to 0"; }
         return s;
     }
 
@@ -242,10 +239,20 @@ public class ShotControlTuning {
                 hoodBottomPos, hoodTopPos);
     }
 
-    /** One line with the two tuning values and the turret trim, for every display. */
+    /** The Dashboard-only values, for the detailed display. */
     public static String tuneLine() {
-        return String.format(java.util.Locale.US, "rpmScale %.2f (gp2 D-pad up/down)   angleOffset %+.1f deg (gp2 D-pad left/right)   turret trim %+.1f",
-                rpmScale, angleOffsetDeg, turretTrimDeg);
+        return String.format(java.util.Locale.US, "rpmScale %.2f   angleOffset %+.1f deg   turret trim %+.1f deg   turretScale %.3f   (Dashboard)",
+                rpmScale, angleOffsetDeg, turretTrimDeg, turretScale);
+    }
+
+    private static double round1(double v) {
+        return Math.round(v * 10.0) / 10.0;
+    }
+
+    /** Null when the saved settings loaded and saved fine, else what is wrong (for the warning line). */
+    public static String settingsProblem() {
+        String all = loadStatus + " | " + ShooterTuning.loadStatus() + " | " + saveStatus;
+        return all.contains("FAILED") || all.contains("UNREADABLE") ? all : null;
     }
 
     public static File settingsFile(String name) {
