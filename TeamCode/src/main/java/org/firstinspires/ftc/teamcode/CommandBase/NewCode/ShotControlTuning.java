@@ -6,6 +6,7 @@ import org.firstinspires.ftc.robotcore.internal.system.AppUtil;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Properties;
 
 /**
@@ -16,11 +17,11 @@ import java.util.Properties;
  * <p>Model: {@link #modelFile} is BUILT INTO the app (TeamCode/src/main/assets/); a file of the same name pushed to
  * {@code /sdcard/FIRST/settings/} overrides it and {@code /sdcard/FIRST/settings/under_shooter_field_tune.json}
  * (optional field-tune export; replaces the shot model). RECOMMENDED model: the R4 export
- * {@code robot_model_red_audience_r4h.json} (aim table with P(stay in cell), bearing calibration in occ.f):
+ * {@code robot_model_red_audience_r4.json} (aim table with P(stay in cell), bearing calibration in occ.f):
  * <pre>
- * adb push outputs/shotcontrol/algos/robot_model_red_audience_r4h.json /sdcard/FIRST/settings/
+ * adb push outputs/shotcontrol/algos/robot_model_red_audience_r4.json /sdcard/FIRST/settings/
  * </pre>
- * then set {@link #modelFile} to {@code robot_model_red_audience_r4h.json} (dashboard), save (gamepad2 START) and reload
+ * then set {@link #modelFile} to {@code robot_model_red_audience_r4.json} (dashboard), save (gamepad2 START) and reload
  * (gamepad2 X), or push it under the default name.
  */
 @Config
@@ -38,8 +39,8 @@ public class ShotControlTuning {
     /** Use the optional field-tune export next to the model when it exists. */
     public static boolean useFieldTune = true;
     /** Model file name in /sdcard/FIRST/settings/ (blank = ReducedShotModel.MODEL_FILE). Recommended:
-     *  robot_model_red_audience_r4h.json. */
-    public static String modelFile = "robot_model_red_audience_r4h.json";
+     *  robot_model_red_audience_r4.json. */
+    public static String modelFile = "robot_model_red_audience_r4.json";
     /** Field-tune export in /sdcard/FIRST/settings/ applied over the model's shot block (ShotTuner: gamepad2 right stick
      *  button toggles useFieldTune; change the name here to swap exports, then gamepad2 left stick button reloads). */
     public static String fieldTuneFile = "under_shooter_field_tune.json";
@@ -79,9 +80,8 @@ public class ShotControlTuning {
     // Turret angle gain: the commanded turret angle is multiplied by this (1.0 = off); only for a turret that turns less than its encoder says.
     public static double turretScale = 1.0;
 
-    // gamepad1 BACK toggles. Field-centric: stick UP = away from the driver across the field, whatever the robot's heading.
+    // Field-centric drive is always on: stick UP = away from the driver across the field, whatever the robot's heading.
     // fieldDriveOffsetDeg rotates that stick frame (0 = driver stands at his own alliance wall; + = toward increasing heading).
-    public static boolean fieldCentricDrive = true;
     public static double fieldDriveOffsetDeg = 0.0;
     // ==========================================================================================================================
     // Turret aim trim (not a model value): hold gamepad2 LEFT TRIGGER + D-pad LEFT / RIGHT.
@@ -149,8 +149,10 @@ public class ShotControlTuning {
     private static final String[] NOT_RESTORED = {"enabled", "gateProtect", "hoodDebug", "hoodDebugPos"};
     // Settings version 3 (2026-11-02): the goal is a global point; these were tuned against the old (wrong) blue goal, so a file saved
     // by an older version does not restore them.
-    private static final String SETTINGS_VERSION = "3";
-    private static final String[] RESET_ON_UPGRADE = {"rpmScale", "angleOffsetDeg", "turretTrimDeg"};
+    private static final String SETTINGS_VERSION = "4";
+    // Version 4 (2026-11-02): back to the r4 model (the r4h hood map was a patch for the wrong goal), so a saved model name is dropped.
+    private static final String[] RESET_BEFORE_V3 = {"rpmScale", "angleOffsetDeg", "turretTrimDeg", "modelFile"};
+    private static final String[] RESET_BEFORE_V4 = {"modelFile"};
 
     private static String loadStatus = "shot_control: not loaded yet";
     private static String saveStatus = "nothing saved yet";
@@ -192,10 +194,12 @@ public class ShotControlTuning {
                 return 0;
             }
             java.util.Properties saved = TuningIO.read(file);
-            boolean upgraded = !SETTINGS_VERSION.equals(saved.getProperty("settingsVersion"));
-            TuningIO.Loaded r = TuningIO.load(ShotControlTuning.class, saved, true, NOT_RESTORED, RESET_ON_UPGRADE, upgraded);
+            String version = saved.getProperty("settingsVersion");
+            boolean upgraded = !SETTINGS_VERSION.equals(version);
+            String[] reset = "3".equals(version) ? RESET_BEFORE_V4 : RESET_BEFORE_V3;
+            TuningIO.Loaded r = TuningIO.load(ShotControlTuning.class, saved, true, NOT_RESTORED, reset, upgraded);
             loadStatus = TuningIO.describe("shot_control", file, r)
-                    + (upgraded ? "  (old file: rpmScale / angleOffsetDeg / turretTrimDeg / goal reset to the defaults)" : "");
+                    + (upgraded ? "  (old file: " + Arrays.toString(reset) + " reset to the defaults)" : "");
             return r.applied;
         } catch (Throwable t) {
             loadStatus = "shot_control: LOAD FAILED (" + t + ") -> built-in defaults";
