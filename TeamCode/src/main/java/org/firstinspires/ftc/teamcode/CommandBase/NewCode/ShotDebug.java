@@ -70,8 +70,6 @@ public final class ShotDebug {
             out.accept("GOAL  X / Y", f("%.1f / %.1f cm   (cell %.1f / %.1f, trim %+.1f / %+.1f)", r.goalXcm, r.goalYcm,
                     r.goalDefaultXcm, r.goalDefaultYcm, ShotControlTuning.goalTrimXcm, ShotControlTuning.goalTrimYcm));
         }
-        out.accept("HOOD ANGLE boost", f("%+.1f deg at the top hood stop (real shot steeper than the model by this; 0 = model as built).  gamepad2 RIGHT STICK UP = +%.1f (close shots too high / short), DOWN = -%.1f  (hold LEFT TRIGGER = %.1f)",
-                ShotControlTuning.hoodAngleBoostDeg, ShotControlTuning.hoodAngleStepDeg, ShotControlTuning.hoodAngleStepDeg, ShotControlTuning.hoodAngleStepCoarseDeg));
         out.accept("gamepad2", f("D-pad up/down = X +-%.0f   left/right = Y +-%.0f cm   (hold LEFT TRIGGER = +-%.0f)   BACK = trim 0   RIGHT BUMPER = alliance   START = save",
                 ShotControlTuning.goalStepCm, ShotControlTuning.goalStepCm, ShotControlTuning.goalStepCoarseCm));
     }

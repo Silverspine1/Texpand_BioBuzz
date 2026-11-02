@@ -53,9 +53,6 @@ public final class ReducedTargeter {
     /** Field tuning: the real shooter launches this many degrees STEEPER than the model (exit space, before the inverse;
      *  0 = Python parity). Negative = flatter. */
     public double angleOffsetDeg = 0.0;
-    /** How much STEEPER the real exit angle is than the model's at the TOP hood stop [deg]; 0 at the bottom stop, linear between.
-     *  The inverse solves with this, so a hood that is steeper than modelled gets a lower hood and the rpm that goes with it. */
-    public double hoodAngleBoostDeg = 0.0;
     /** > 0: the hive-occlusion map is the RED goal's; a goal on the other side of the field centre line is its mirror image, so the
      *  map is read at y -> occMirrorW - y (the field width). 0 = as exported. */
     public double occMirrorW = 0.0;
@@ -104,16 +101,6 @@ public final class ReducedTargeter {
         }
         double h = g[lo + 1] - g[lo];
         li = lo; lt = (x - g[lo]) / h; lh = h;
-    }
-
-    /** The exit angle at (rpm, hood) as the REAL hood throws it: the model's angle + hoodAngleBoostDeg x hood / top hood. Sets bv, bdr, bdh. */
-    private void bicubicAngle(double rpm, double hood) {
-        bicubic(ReducedShotModel.S_ANGLE, rpm, hood);
-        if (hoodAngleBoostDeg != 0.0) {
-            double top = M.shotHood[M.nH - 1];
-            bv += hoodAngleBoostDeg * hood / top;
-            bdh += hoodAngleBoostDeg / top;
-        }
     }
 
     /** Sets bv, bdr, bdh = value, d/drpm, d/dhood of shot field {@code f} at (rpm, hood). */
@@ -326,7 +313,7 @@ public final class ReducedTargeter {
         for (int it = 0; it < C.nInv; it++) {
             bicubic(ReducedShotModel.S_SPEED, rpm, hood);
             double s = bv, sR = bdr, sH = bdh;
-            bicubicAngle(rpm, hood);
+            bicubic(ReducedShotModel.S_ANGLE, rpm, hood);
             double a = bv, aR = bdr, aH = bdh;
             double e1 = speed - s, e2 = angle - a;
             double det = sR * aH - sH * aR;
@@ -336,7 +323,7 @@ public final class ReducedTargeter {
         }
         bicubic(ReducedShotModel.S_SPEED, rpm, hood);
         double sFin = bv;
-        bicubicAngle(rpm, hood);
+        bicubic(ReducedShotModel.S_ANGLE, rpm, hood);
         double aFin = bv;
         double invErr = Math.abs(sFin - speed) / Math.max(0.01 * speed, 1e-6) + Math.abs(aFin - angle) / 0.5;
         // 6. droop (balls 2..n of a burst)
@@ -354,7 +341,7 @@ public final class ReducedTargeter {
                 for (int it = 0; it < C.nDroop; it++) {
                     bicubic(ReducedShotModel.S_SPEED, wRel, hh);
                     double s = bv, sH = bdh;
-                    bicubicAngle(wRel, hh);
+                    bicubic(ReducedShotModel.S_ANGLE, wRel, hh);
                     double a = bv, aH = bdh;
                     double f = s - speed - tSlope * (a - angle);
                     double df = sH - tSlope * aH;
@@ -363,7 +350,7 @@ public final class ReducedTargeter {
                 }
                 bicubic(ReducedShotModel.S_SPEED, wRel, hh);
                 double s = bv;
-                bicubicAngle(wRel, hh);
+                bicubic(ReducedShotModel.S_ANGLE, wRel, hh);
                 double a = bv;
                 famErr = s - speed - tSlope * (a - angle);
                 if (Math.abs(famErr) < 2.0) hood = hh;
