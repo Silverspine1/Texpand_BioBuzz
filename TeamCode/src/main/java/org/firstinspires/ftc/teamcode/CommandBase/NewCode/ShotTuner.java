@@ -45,8 +45,7 @@ import java.util.Locale;
  *   D-pad up / down   rpmScale +/-     D-pad right / left   angleOffsetDeg +/-     LEFT TRIGGER + D-pad left / right   turret trim
  *   BACK   clear turret trim     Y   HOOD DEBUG on/off: D-pad up/down +-0.001, right = top, left = bottom
  *   START                    save ShotControlTuning to /sdcard/FIRST/settings/shot_control.properties
- *   left stick button        reload the model + field-tune export     right stick button   toggle useFieldTune + reload
- *                            (swap to another export: set ShotControlTuning.fieldTuneFile on the Dashboard, then reload)
+ *   left stick button        reload the built-in model
  * </pre>
  */
 @Config
@@ -170,12 +169,6 @@ public class ShotTuner extends OpModeEX {
         if (!lastGamepad2.left_stick_button && currentGamepad2.left_stick_button) {
             shooterController.loadReducedModel();
             status = "reloaded: " + shooterController.reducedStatus;
-        }
-        if (!lastGamepad2.right_stick_button && currentGamepad2.right_stick_button) {
-            ShotControlTuning.useFieldTune = !ShotControlTuning.useFieldTune;
-            shooterController.loadReducedModel();
-            status = "field-tune " + (ShotControlTuning.useFieldTune ? "ON " : "OFF ") + ShotControlTuning.fieldTuneFile
-                    + " -> " + shooterController.reducedStatus;
         }
         if (!lastGamepad2.start && currentGamepad2.start) status = ShotControlTuning.saveAll();
 
