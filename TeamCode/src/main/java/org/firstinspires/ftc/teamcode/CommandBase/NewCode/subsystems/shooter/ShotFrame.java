@@ -27,10 +27,8 @@ package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter;
  */
 public final class ShotFrame {
 
-    /** Field inner width [in] the model was built for (= Python {@code api.FIELD_WIDTH_IN}, CAD inner faces of the walls). */
-    public static final double W_MODEL_IN = 141.348;
-    /** Real field inner width [in] (ShotControlTuning.fieldWidthCm). The hive sits at the field centre, so the goal moves with it. */
-    public static double W_IN = W_MODEL_IN;
+    /** Field inner width [in] (= Python {@code api.FIELD_WIDTH_IN}, the CAD inner faces of the walls). */
+    public static final double W_IN = 141.348;
     public static final double CM_PER_IN = 2.54;
     public static final double M_PER_IN = 0.0254;
 
@@ -131,6 +129,21 @@ public final class ShotFrame {
     public static void pivotFromJava(double forwardM, double sidewaysM, double[] out) {
         out[0] = forwardM / M_PER_IN;
         out[1] = handSign() * sidewaysM / M_PER_IN;
+    }
+
+    /**
+     * A Java field delta (cm, the Odometry X / Y frame) -> the same delta in the frame the shot controller solves in = the RED team
+     * frame (in), which is what {@link #toTeam} gives for {@code blue = false}. Writes {@code out[0] = dx, out[1] = dy}.
+     */
+    public static void javaDeltaToRedTeamIn(double dxCm, double dyCm, double[] out) {
+        out[0] = dxCm / CM_PER_IN;
+        out[1] = (LATERAL_SIGN >= 0 ? -dyCm : dyCm) / CM_PER_IN;
+    }
+
+    /** A point of the red team frame (in) as a Java field point (cm): the inverse of {@link #toTeam} for {@code blue = false}. */
+    public static void redTeamInToJavaCm(double xIn, double yIn, double[] out) {
+        out[0] = xIn * CM_PER_IN;
+        out[1] = (LATERAL_SIGN >= 0 ? W_IN - yIn : yIn) * CM_PER_IN;
     }
 
     /** TEAM point (in) -> Java field point (m) for the alliance (inverse of the position part of toTeam). */

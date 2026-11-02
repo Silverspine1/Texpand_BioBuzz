@@ -31,9 +31,52 @@ public final class ShotDebug {
         return a - 360.0 * Math.floor((a + 180.0) / 360.0);
     }
 
+    /** The few lines that matter while shooting, the same in Shot Tuner and Test_tele. {@code feed} / {@code msg} are the OpMode's own texts. */
+    public static void compact(Odometry odo, ShooterController sc, String feed, String msg, BiConsumer<String, String> out) {
+        final ReducedShotController r = sc.reduced;
+        StringBuilder warn = new StringBuilder();
+        if (!r.hasModel()) warn.append("NO MODEL: ").append(sc.reducedStatus).append("   ");
+        if (sc.flywheelBackwards) warn.append("FLYWHEEL BACKWARDS (ShotControlTuning.shooterMotorReversed)   ");
+        if (odo.isPosePending()) warn.append("START POSE NOT WRITTEN (pinpoint ").append(odo.pinpointStatus()).append(")   ");
+        if (!ShotControlTuning.gateProtect) warn.append("MOVEMENT PROTECTION OFF   ");
+        String problem = ShotControlTuning.settingsProblem();
+        if (problem != null) warn.append("SETTINGS: ").append(problem);
+        if (warn.length() > 0) out.accept("!!! WARNING", warn.toString().trim());
+        out.accept("SHOOTING", f("targeting %s | gate %s | P(make) %.2f", sc.targeting ? "ON" : "OFF", gateText(r), r.feasible ? r.pMake : 0.0));
+        out.accept("feed", feed);
+        out.accept("pose", f("X %.1f  Y %.1f cm   heading %.1f deg", odo.X(), odo.Y(), odo.Heading()));
+        if (r.hasModel()) {
+            out.accept("range to goal", f("%.0f cm  (%.1f in)", r.result.d * ShotFrame.CM_PER_IN, r.result.d));
+            out.accept("turret  cmd / now / err", f("%.1f / %.1f / %.1f deg", r.turretJavaDeg, sc.getTurretAimDeg(), r.lastTurretErr));
+            out.accept("wheel  rpm now / cmd", f("%.0f / %.0f  %s", sc.RPM, r.rpmCmd, sc.flywheelReady() ? "READY" : ""));
+            out.accept("hood", f("%.1f of 6.3 deg -> servo %.3f%s", sc.hoodTargetDeg, sc.hoodServoPos,
+                    ShotControlTuning.hoodDebug ? "   HOOD DEBUG (gamepad2 Y = off)" : ""));
+        }
+        if (msg != null && !msg.isEmpty()) out.accept("last action", msg);
+    }
+
+    private static String gateText(ReducedShotController r) {
+        return ReducedShotController.GATE_TEXT[r.gateState]
+                + (r.gateState == ReducedShotController.GATE_UNSETTLED ? " (" + ReducedShotController.REFUSE_TEXT[r.gateRefuse] + ")" : "");
+    }
+
+    /** The goal block: ALWAYS the last thing on the screen. */
+    public static void goalBlock(ShooterController sc, BiConsumer<String, String> out) {
+        final ReducedShotController r = sc.reduced;
+        out.accept("=== GOAL (global field cm; alliance " + (ShotControlTuning.blueAlliance ? "BLUE" : "RED") + ", close cell) ===", "");
+        if (!r.hasModel()) {
+            out.accept("GOAL  X / Y", "no model loaded");
+        } else {
+            out.accept("GOAL  X / Y", f("%.1f / %.1f cm   (cell %.1f / %.1f, trim %+.1f / %+.1f)", r.goalXcm, r.goalYcm,
+                    r.goalDefaultXcm, r.goalDefaultYcm, ShotControlTuning.goalTrimXcm, ShotControlTuning.goalTrimYcm));
+        }
+        out.accept("gamepad2", f("D-pad up/down = X +-%.0f   left/right = Y +-%.0f cm   (hold LEFT TRIGGER = +-%.0f)   BACK = trim 0   RIGHT BUMPER = alliance   START = save",
+                ShotControlTuning.goalStepCm, ShotControlTuning.goalStepCm, ShotControlTuning.goalStepCoarseCm));
+    }
+
     /** Odometry, assigned start pose, team-frame pose, goal geometry and turret check. */
     public static void pose(Odometry odo, ShooterController sc, BiConsumer<String, String> out) {
-        final boolean blue = ShotControlTuning.blueAlliance;
+        final boolean blue = false;                    // the goal is a global point: the pose is never rotated for an alliance
         final double x = odo.X(), y = odo.Y(), h = odo.Heading();
         out.accept("--- WHERE IT THINKS IT IS ---", "");
         out.accept("odometry X / Y / heading", f("%.1f cm / %.1f cm / %.1f deg   (%.1f, %.1f in)", x, y, h, x / 2.54, y / 2.54));
@@ -44,8 +87,7 @@ public final class ShotDebug {
         double dh = wrap180(h - ShooterTuning.startHeadingDeg);
         out.accept("moved since start", f("dx %.1f cm  dy %.1f cm  dheading %.1f deg   (all ~0 before you move)",
                 x - ShooterTuning.startXcm, y - ShooterTuning.startYcm, dh));
-        out.accept("alliance / frame", f("%s   JAVA_FRAME_IS_FIXED_RED=%s  LATERAL_SIGN=%d  (ShotFrame)",
-                blue ? "BLUE" : "RED", ShotFrame.JAVA_FRAME_IS_FIXED_RED, ShotFrame.LATERAL_SIGN));
+        out.accept("frame", f("global field frame (the pose is never rotated; the alliance picks the close goal cell)  LATERAL_SIGN=%d", ShotFrame.LATERAL_SIGN));
         FRAME.toTeam(blue, x, y, h, 0, 0, 0, 0, 0);
         out.accept("turret zero", ShooterTuning.assumeTurretForwardAtStart
                 ? "ASSUMED straight forward at start (zeroed at INIT and at PLAY; ShooterTuning.assumeTurretForwardAtStart)"
@@ -75,9 +117,8 @@ public final class ShotDebug {
         double turretTeam = wrap180(bearing - FRAME.headingDeg);
         double turretJava = ShotFrame.turretTeamToJava(turretTeam);
         out.accept("--- WHERE THE GOAL IS ---", "");
-        out.accept("goal aim point (team frame)", f("x %.1f in (%.1f cm)  y %.1f in (%.1f cm)  z %.1f in  | field %.1f cm  shift far %.1f right %.1f cm  turretScale %.3f",
-                m.aimX, m.aimX * ShotFrame.CM_PER_IN, m.aimY, m.aimY * ShotFrame.CM_PER_IN, m.aimZ,
-                ShotFrame.W_IN * ShotFrame.CM_PER_IN, ShotControlTuning.aimShiftFarCm, ShotControlTuning.aimShiftRightCm, ShotControlTuning.turretScale));
+        out.accept("goal aim point", f("x %.1f cm  y %.1f cm  z %.1f in   (in the red team frame: %.1f / %.1f in)",
+                m.aimX * ShotFrame.CM_PER_IN, m.aimY * ShotFrame.CM_PER_IN, m.aimZ, m.aimX, m.aimY));
         out.accept("turret axis (team frame)", f("x %.1f in  y %.1f in   (offset %.1f fwd / %.1f right from the robot centre)", px, py, pivotFwd, pivotRight));
         out.accept("to goal: dx / dy / RANGE", f("%.1f / %.1f in   RANGE %.1f in  (%.2f m)   field bearing %.1f deg", dx, dy, range, range * ShotFrame.M_PER_IN, bearing));
         out.accept("straight-line turret angle", f("should point %.1f deg (robot-relative, Java sign)", turretJava));

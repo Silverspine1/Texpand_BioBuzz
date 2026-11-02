@@ -120,7 +120,6 @@ public class ShooterController extends SubSystem {
         zeroTurretAtStart();
 
         ShotControlTuning.load();
-        applyFieldWidth();
         applyMotorDirection();
         applyTurretTune();
         try {
@@ -170,14 +169,9 @@ public class ShooterController extends SubSystem {
         if (!reduced.hasModel()) {
             return String.format(java.util.Locale.US, "NO MODEL (%s) -> hood held at bottom, servo %.3f%s", reducedStatus, hoodServoPos, check);
         }
-        return String.format(java.util.Locale.US, "%s alliance | range %.0f in -> hood %.1f of 6.3 deg -> servo %.3f (bottom %.3f, top %.3f)  targeting %s%s",
-                ShotControlTuning.blueAlliance ? "BLUE" : "RED", reduced.result.d, hoodTargetDeg, hoodServoPos,
+        return String.format(java.util.Locale.US, "range %.0f in -> hood %.1f of 6.3 deg -> servo %.3f (bottom %.3f, top %.3f)  targeting %s%s",
+                reduced.result.d, hoodTargetDeg, hoodServoPos,
                 ShotControlTuning.hoodBottomPos, ShotControlTuning.hoodTopPos, targeting ? "ON" : "OFF", check);
-    }
-
-    /** The real field width (ShotControlTuning.fieldWidthCm) into the frame conversion; also at init so INIT displays use it. */
-    private static void applyFieldWidth() {
-        ShotFrame.W_IN = ShotControlTuning.fieldWidthCm > 300.0 ? ShotControlTuning.fieldWidthCm / ShotFrame.CM_PER_IN : ShotFrame.W_MODEL_IN;
     }
 
     public void loadReducedModel() {
@@ -379,10 +373,10 @@ public class ShooterController extends SubSystem {
         p.useModelTurretLead = ShotControlTuning.useModelTurretLead;
         p.rpmScale = ShotControlTuning.rpmScale;
         p.angleOffsetDeg = ShotControlTuning.angleOffsetDeg;
-        p.aimShiftFarIn = ShotControlTuning.aimShiftFarCm / ShotFrame.CM_PER_IN;
-        p.aimShiftRightIn = ShotControlTuning.aimShiftRightCm / ShotFrame.CM_PER_IN;
+        p.globalGoal = true;
+        p.goalTrimXcm = ShotControlTuning.goalTrimXcm;
+        p.goalTrimYcm = ShotControlTuning.goalTrimYcm;
         p.turretScale = ShotControlTuning.turretScale > 0.5 ? ShotControlTuning.turretScale : 1.0;
-        applyFieldWidth();
         p.turretTrimDeg = ShotControlTuning.turretTrimDeg;
         p.gateProtect = ShotControlTuning.gateProtect;
         p.gateTurRelTolDeg = ShotControlTuning.gateTurRelTolDeg;

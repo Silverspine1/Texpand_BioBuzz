@@ -81,12 +81,16 @@ public class ShotTuner extends OpModeEX {
         telemetry.addLine("Check the pose below equals your start pose, the model is loaded, then press PLAY.");
         if (gamepad2.right_bumper && !initAllianceLatch) ShotControlTuning.blueAlliance = !ShotControlTuning.blueAlliance;
         initAllianceLatch = gamepad2.right_bumper;
-        put("ALLIANCE", (ShotControlTuning.blueAlliance ? "BLUE" : "RED") + "  (gamepad2 RIGHT BUMPER switches it here in INIT; START saves after PLAY)");
-        ShotDebug.pose(odometry, shooterController, this::put);
+        put("ALLIANCE", (ShotControlTuning.blueAlliance ? "BLUE" : "RED") + "  (picks the close goal cell and the field-centric drive direction; gamepad2 RIGHT BUMPER switches it here in INIT)");
+        put("pose", f("X %.1f  Y %.1f cm   heading %.1f deg   pinpoint %s%s", odometry.X(), odometry.Y(), odometry.Heading(),
+                odometry.pinpointStatus(), odometry.isPosePending() ? "   !!! start pose NOT written yet" : ""));
+        put("assigned start pose", f("%.1f, %.1f cm @ %.1f deg  (ShooterTuning startXcm / startYcm / startHeadingDeg)",
+                ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg));
         put("model", shooterController.reducedStatus);
         put("SETTINGS", ShotControlTuning.settingsLine());
         put("battery", f("%.2f V", shooterController.batteryVolts));
         put("log", logStatus);
+        ShotDebug.goalBlock(shooterController, this::put);
         dash.update();
     }
 
@@ -302,45 +306,18 @@ public class ShotTuner extends OpModeEX {
     }
 
     private void telemetryBlock(ReducedShotController r, double now, boolean applicable) {
-        put("HOOD", shooterController.hoodStatusLine());
-        put("SETTINGS", ShotControlTuning.settingsLine());
-        put("DRIVE", ShotControlTuning.fieldCentricDrive ? "FIELD-CENTRIC (gamepad1 BACK = robot-centric)" : "ROBOT-CENTRIC (gamepad1 BACK = field-centric)");
-        say("TUNE: " + ShotControlTuning.tuneLine());
-        say(ShotControlTuning.gateProtect
-                ? "=== MOVEMENT PROTECTION: ON  (gamepad1 B turns it OFF) ==="
-                : "!!! MOVEMENT PROTECTION: OFF  (fires as soon as feasible; gamepad1 B turns it ON) !!!");
-        if (flyTest) say(">>> FLYWHEEL TEST: gamepad2 right trigger held = manual power, targeting OFF. Read the rpm below, then release. <<<");
-        ShotDebug.pose(odometry, shooterController, this::put);
-        ShotDebug.flywheel(shooterController, this::put);
-        say("--- SHOT ---");
-        put("feed", hold.state == ShotHold.HOLDING
-                ? f("HELD %.2f s: gate says %s%s", hold.heldBackS(now), ReducedShotController.GATE_TEXT[r.gateState],
-                    r.gateState == ReducedShotController.GATE_UNSETTLED ? " (" + ReducedShotController.REFUSE_TEXT[r.gateRefuse] + ")" : "")
-                : ShotHold.TEXT[hold.state] + (applicable ? "" : "  [gate not holding: controller off / no model / gateHoldsFire off]"));
-        put("gate now", ReducedShotController.GATE_TEXT[r.gateState]
-                + (r.gateState == ReducedShotController.GATE_UNSETTLED ? " (" + ReducedShotController.REFUSE_TEXT[r.gateRefuse] + ")" : "")
-                + (r.requestActive ? (r.gateDeadline ? "  DEADLINE" : f("  window %.2f s left", r.gateTLeft)) : ""));
-        put("turret err now / at release", f("%.2f / %.2f deg  (tol %.1f, rate %.0f deg/s, cap %.0f)", r.lastTurretErr, r.gateEstRelDeg,
-                ShotControlTuning.gateTurRelTolDeg, shooterController.encoder.getVelocity(), ShotControlTuning.gateTurRateCapDps));
-        put("wheel rpm / cmd", f("%.0f / %.0f  (tol %.0f)%s", shooterController.RPM, r.rpmCmd, ShotControlTuning.gateRpmTolRpm,
-                shooterController.forceRpm > 0 ? "  SLIP FORCED" : ""));
-        put("yaw rate / limit", f("%.0f / %.0f deg/s", odometry.getHeadingVelocityDeg(), ShotControlTuning.gateOmegaMaxDps));
-        put("claim P / feasible / best ahead", f("%.3f / %s / %.3f", r.feasible ? r.pMake : 0.0, r.feasible, r.gateBestAhead));
-        put("range (pivot->aim) / hood / turret cmd", f("%.1f in / %.3f deg / %.1f deg", r.result.d, r.hoodDeg, r.turretJavaDeg));
-        put("controller", f("active %s targeting %s  %s", shooterController.reducedActive,
-                shooterController.targeting, shooterController.reducedStatus));
-
+        String feedText = hold.state == ShotHold.HOLDING
+                ? f("HELD %.2f s: gate says %s", hold.heldBackS(now), ReducedShotController.GATE_TEXT[r.gateState])
+                : ShotHold.TEXT[hold.state] + (applicable ? "" : "  [gate not holding: controller off / no model / gateHoldsFire off]");
+        ShotDebug.compact(odometry, shooterController, feedText, status, this::put);
+        put("shots / last label", shotCount + " / " + ShotCsv.LABEL[lastLabel]
+                + (pending != null ? "   (shot " + shotCount + " WAITING FOR A LABEL)" : "   (label: A hit, B short, X long, LB left, RB right)"));
+        put("drive", (ShotControlTuning.fieldCentricDrive ? "FIELD-CENTRIC" : "ROBOT-CENTRIC") + " (gamepad1 BACK toggles)");
+        if (flyTest) say(">>> FLYWHEEL TEST: gamepad2 right trigger held = manual power, targeting OFF. Read the rpm, then release. <<<");
         if (CAMPAIGN_ON) {
             put("CAMPAIGN", campaign.instruction());
-            if (!campaign.done()) {
-                put("at the stand?", campaign.atStand(r.result.d)
-                        ? f("yes (axis range %.0f - 4 in wheel offset = %.0f; stand %d in)", r.result.d, r.result.d - ShotCampaign.WHEEL_FORWARD_IN, campaign.nominalRangeIn())
-                        : f("NO: axis range %.0f - 4 = %.0f in wheel-to-goal, stand is %d in", r.result.d, r.result.d - ShotCampaign.WHEEL_FORWARD_IN, campaign.nominalRangeIn()));
-            }
         }
-        put("shots / last label", shotCount + " / " + ShotCsv.LABEL[lastLabel] + (pending != null ? "   (shot " + shotCount + " WAITING FOR A LABEL)" : ""));
         put("log", logStatus);
-        put("status", status);
-        put("battery", f("%.2f V", shooterController.batteryVolts));
+        ShotDebug.goalBlock(shooterController, this::put);
     }
 }
