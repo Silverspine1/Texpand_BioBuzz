@@ -96,14 +96,9 @@ public class Test_tele extends OpModeEX {
             IntakeHardware.Vertical = -1;
             IntakeHardware.State = intakeHardware_doubleBot.intakeState.intaking;
         } else {
-        if (!lastGamepad1.back && currentGamepad1.back) ShotControlTuning.fieldCentricDrive = !ShotControlTuning.fieldCentricDrive;
-        if (ShotControlTuning.fieldCentricDrive) {
-            // stick UP = away from the driver across the field, whatever the robot's heading (gamepad1 BACK toggles)
-            driveBase.driveFieldCentric(-gamepad1.right_stick_y, gamepad1.right_stick_x, (gamepad1.left_trigger - gamepad1.right_trigger),
-                    odometry.Heading(), ShotControlTuning.blueAlliance, ShotControlTuning.fieldDriveOffsetDeg);
-        } else {
-            driveBase.drivePowers(gamepad1.right_stick_y, -gamepad1.right_stick_x, (gamepad1.left_trigger - gamepad1.right_trigger));
-        }
+        // stick UP = away from the driver across the field, whatever the robot's heading
+        driveBase.driveFieldCentric(-gamepad1.right_stick_y, gamepad1.right_stick_x, (gamepad1.left_trigger - gamepad1.right_trigger),
+                odometry.Heading(), ShotControlTuning.blueAlliance, ShotControlTuning.fieldDriveOffsetDeg);
         IntakeHardware.Vertical = driveBase.vertical;
         // FEED = gamepad1 left bumper. With the reduced controller active the fire gate HOLDS it until FireGate says FIRE
         // (ShotControlTuning.gateHoldsFire; gamepad2 B = override, gamepad2 left bumper = movement protection ON/OFF).
@@ -168,7 +163,7 @@ public class Test_tele extends OpModeEX {
         // ---- what is shown: the few shooting lines, the detailed screens only on request, the GOAL block ALWAYS last ----
         ShotDebug.compact(odometry, shooterController, ShotHold.TEXT[shotHold.state],
                 (reducedSaveStatus + "  " + poseStatus).trim(), telemetry::addData);
-        telemetry.addData("drive", (ShotControlTuning.fieldCentricDrive ? "FIELD-CENTRIC" : "ROBOT-CENTRIC") + " (gamepad1 BACK toggles)   alliance "
+        telemetry.addData("drive", "FIELD-CENTRIC   alliance "
                 + (ShotControlTuning.blueAlliance ? "BLUE" : "RED") + " (gamepad2 right bumper)");
         if (!detailed) {
             telemetry.addData("more", "gamepad2 LEFT STICK CLICK = detailed turret / encoder / flywheel screens");
