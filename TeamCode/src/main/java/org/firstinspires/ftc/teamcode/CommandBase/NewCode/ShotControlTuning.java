@@ -6,7 +6,6 @@ import org.firstinspires.ftc.robotcore.internal.system.AppUtil;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Properties;
 
 /**
@@ -14,7 +13,7 @@ import java.util.Properties;
  * The only shot command source (the old Shotplanner is deleted).
  * Edit live in FTC Dashboard; gamepad2 START in Test_tele saves to {@code /sdcard/FIRST/settings/shot_control.properties}.
  *
- * <p>Model: ONE file, {@code robot_model_red_audience_r6.json}, built into the app (TeamCode/src/main/assets/). Nothing on the
+ * <p>Model: ONE file, {@code robot_model_red_audience_r10.json}, built into the app (TeamCode/src/main/assets/). Nothing on the
  * hub overrides it (no /sdcard model, no field-tune export); to change the model replace that asset and rebuild.
  */
 @Config
@@ -132,12 +131,9 @@ public class ShotControlTuning {
     // Not restored from the saved file: the new controller always starts OFF, the movement protection always starts ON, the hood
     // debug always starts OFF (and its position is only a scratch value).
     private static final String[] NOT_RESTORED = {"enabled", "gateProtect", "hoodDebug", "hoodDebugPos"};
-    // Settings version 3 (2026-11-02): the goal is a global point; these were tuned against the old (wrong) blue goal, so a file saved
-    // by an older version does not restore them.
-    private static final String SETTINGS_VERSION = "4";
-    // Version 4 (2026-11-02): back to the r4 model (the r4h hood map was a patch for the wrong goal), so a saved model name is dropped.
-    private static final String[] RESET_BEFORE_V3 = {"rpmScale", "angleOffsetDeg", "turretTrimDeg"};
-    private static final String[] RESET_BEFORE_V4 = {};
+    // Bumped when the code defaults must win once: a file saved by an older version is ignored (built-in defaults) until the
+    // next save writes this version. Version 5 (2026-11-02): model r10 has the per-hood power in it, so rpmScale is back to 1.0.
+    private static final String SETTINGS_VERSION = "5";
 
     private static String loadStatus = "shot_control: not loaded yet";
     private static String saveStatus = "nothing saved yet";
@@ -180,11 +176,13 @@ public class ShotControlTuning {
             }
             java.util.Properties saved = TuningIO.read(file);
             String version = saved.getProperty("settingsVersion");
-            boolean upgraded = !SETTINGS_VERSION.equals(version);
-            String[] reset = "3".equals(version) ? RESET_BEFORE_V4 : RESET_BEFORE_V3;
-            TuningIO.Loaded r = TuningIO.load(ShotControlTuning.class, saved, true, NOT_RESTORED, reset, upgraded);
-            loadStatus = TuningIO.describe("shot_control", file, r)
-                    + (upgraded ? "  (old file: " + Arrays.toString(reset) + " reset to the defaults)" : "");
+            if (!SETTINGS_VERSION.equals(version)) {
+                loadStatus = "shot_control: saved file is version " + version + ", not " + SETTINGS_VERSION
+                        + " -> IGNORED this run, built-in defaults (save to keep them)";
+                return 0;
+            }
+            TuningIO.Loaded r = TuningIO.load(ShotControlTuning.class, saved, true, NOT_RESTORED, new String[0], false);
+            loadStatus = TuningIO.describe("shot_control", file, r);
             return r.applied;
         } catch (Throwable t) {
             loadStatus = "shot_control: LOAD FAILED (" + t + ") -> built-in defaults";
