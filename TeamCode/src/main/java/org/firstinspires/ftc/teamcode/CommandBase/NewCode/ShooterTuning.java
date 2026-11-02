@@ -59,8 +59,8 @@ public class ShooterTuning {
     public static double flywheelReadyPercent = 3.0;
 
     // Start pose used by Test_tele / Shot Tuner at init and by their set-pose button (cm, degrees)
-    public static double startXcm = 22;
-    public static double startYcm = 344;
+    public static double startXcm = 28;
+    public static double startYcm = 350;
     public static double startHeadingDeg = 0;
 
     private static boolean tunable(Field f) {
