@@ -161,7 +161,7 @@ public class ShooterController extends SubSystem {
      * Then the optional field-tune export. Never throws: a bad file leaves no model (flywheel off, status says why).
      */
     /** The model file bundled in TeamCode/src/main/assets/ (fallback when ShotControlTuning.modelFile is not found). */
-    public static final String BUILT_IN_MODEL = "robot_model_red_audience_r5.json";
+    public static final String BUILT_IN_MODEL = "robot_model_red_audience_r6.json";
 
     /** One short line for the top of every display: model, targeting, range, hood command and the servo position written. */
     public String hoodStatusLine() {
