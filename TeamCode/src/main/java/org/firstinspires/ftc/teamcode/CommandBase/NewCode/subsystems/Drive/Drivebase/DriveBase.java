@@ -225,23 +225,17 @@ public class DriveBase extends SubSystem implements PathLog.Extras {
         return m;
     }
 
-    public void driveFieldCentric(double drive, double strafe, double turn, double robotHeading) {
-        double headingOffset ;
-        if (Alliance == alliance_side.blue) {
-            headingOffset = -270 ;
-        } else {
-             headingOffset = - 90 ;
-        }
-        // Convert degrees → radians (most common IMU method in FTC)
-        double headingRadians = Math.toRadians(robotHeading + headingOffset);
+    private final FieldDrive fieldDrive = new FieldDrive();
 
-        // Now rotate the translation vector opposite to the robot's heading
-        double rotX = strafe * Math.cos(-headingRadians) - drive * Math.sin(-headingRadians);
-        double rotY = strafe * Math.sin(-headingRadians) + drive * Math.cos(-headingRadians);
-        if (Math.abs( rotX) < 0.2){
-            rotX = 0;
-        }
-        drivePowers(rotY, turn, rotX);
+    /**
+     * Field-centric drive (see {@link FieldDrive}): stick up = away from the driver across the field, whatever the robot's
+     * heading. {@code turn} as in {@link #drivePowers(double, double, double)}.
+     * (The old version passed its arguments in the order of an older drivePowers signature, so the right stick turned the
+     * robot and the triggers strafed it, and it dropped any strafe under 0.2.)
+     */
+    public void driveFieldCentric(double stickUp, double stickRight, double turn, double headingDeg, boolean blue, double offsetDeg) {
+        fieldDrive.solve(stickUp, stickRight, headingDeg, blue, offsetDeg);
+        drivePowers(fieldDrive.vertical, fieldDrive.strafe, turn);
     }
 
 }

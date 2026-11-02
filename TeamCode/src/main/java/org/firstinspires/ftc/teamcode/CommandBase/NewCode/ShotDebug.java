@@ -75,7 +75,9 @@ public final class ShotDebug {
         double turretTeam = wrap180(bearing - FRAME.headingDeg);
         double turretJava = ShotFrame.turretTeamToJava(turretTeam);
         out.accept("--- WHERE THE GOAL IS ---", "");
-        out.accept("goal aim point (team frame)", f("x %.1f in  y %.1f in  z %.1f in", m.aimX, m.aimY, m.aimZ));
+        out.accept("goal aim point (team frame)", f("x %.1f in (%.1f cm)  y %.1f in (%.1f cm)  z %.1f in  | field %.1f cm  shift far %.1f right %.1f cm  turretScale %.3f",
+                m.aimX, m.aimX * ShotFrame.CM_PER_IN, m.aimY, m.aimY * ShotFrame.CM_PER_IN, m.aimZ,
+                ShotFrame.W_IN * ShotFrame.CM_PER_IN, ShotControlTuning.aimShiftFarCm, ShotControlTuning.aimShiftRightCm, ShotControlTuning.turretScale));
         out.accept("turret axis (team frame)", f("x %.1f in  y %.1f in   (offset %.1f fwd / %.1f right from the robot centre)", px, py, pivotFwd, pivotRight));
         out.accept("to goal: dx / dy / RANGE", f("%.1f / %.1f in   RANGE %.1f in  (%.2f m)   field bearing %.1f deg", dx, dy, range, range * ShotFrame.M_PER_IN, bearing));
         out.accept("straight-line turret angle", f("should point %.1f deg (robot-relative, Java sign)", turretJava));
