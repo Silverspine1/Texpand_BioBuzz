@@ -14,7 +14,7 @@ import java.util.Properties;
  * The only shot command source (the old Shotplanner is deleted).
  * Edit live in FTC Dashboard; gamepad2 START in Test_tele saves to {@code /sdcard/FIRST/settings/shot_control.properties}.
  *
- * <p>Model: ONE file, {@code robot_model_red_audience_r5.json}, built into the app (TeamCode/src/main/assets/). Nothing on the
+ * <p>Model: ONE file, {@code robot_model_red_audience_r6.json}, built into the app (TeamCode/src/main/assets/). Nothing on the
  * hub overrides it (no /sdcard model, no field-tune export); to change the model replace that asset and rebuild.
  */
 @Config

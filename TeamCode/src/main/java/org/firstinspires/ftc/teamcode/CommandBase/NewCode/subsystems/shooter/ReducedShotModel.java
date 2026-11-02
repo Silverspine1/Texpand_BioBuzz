@@ -18,8 +18,8 @@ import java.util.Map;
  * {@code AppUtil.getInstance().getSettingsFile(name)} resolves to, the same place as
  * {@code shooter_tune.properties} and {@code turret_tune.properties}). Copy it with
  * {@code adb push robot_model_red_audience.json /sdcard/FIRST/settings/}. Recommended (R4):
- * {@code adb push outputs/shotcontrol/algos/robot_model_red_audience_r5.json /sdcard/FIRST/settings/} and
- * {@code ShotControlTuning.modelFile = "robot_model_red_audience_r5.json"} (same layout; optional keys
+ * {@code adb push outputs/shotcontrol/algos/robot_model_red_audience_r6.json /sdcard/FIRST/settings/} and
+ * {@code ShotControlTuning.modelFile = "robot_model_red_audience_r6.json"} (same layout; optional keys
  * {@code occ.bearing_calib} and {@code aim.meta.stay} are informational). An optional field-tune export
  * ({@code under_shooter_field_tune/1}, docs/UNDER_SHOOTER_TUNING.md) placed next to it as
  * {@link #FIELD_TUNE_FILE} replaces the {@code shot} block ({@link #applyFieldTune}).
@@ -35,7 +35,7 @@ public final class ReducedShotModel {
     /** Default file names in /sdcard/FIRST/settings/ (the model name is configurable: ShotControlTuning.modelFile). */
     public static final String MODEL_FILE = "robot_model_red_audience.json";
     /** Recommended model (review R4: aim table with P(stay in cell), bearing calibration folded into occ.f). */
-    public static final String MODEL_FILE_R4 = "robot_model_red_audience_r5.json";
+    public static final String MODEL_FILE_R4 = "robot_model_red_audience_r6.json";
     public static final String FIELD_TUNE_FILE = "under_shooter_field_tune.json";
 
     // ---- constants --------------------------------------------------------------------------------------------
