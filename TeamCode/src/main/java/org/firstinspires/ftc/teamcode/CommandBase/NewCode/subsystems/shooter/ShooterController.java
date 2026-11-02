@@ -348,6 +348,7 @@ public class ShooterController extends SubSystem {
         p.useModelTurretLead = ShotControlTuning.useModelTurretLead;
         p.rpmScale = ShotControlTuning.rpmScale;
         p.angleOffsetDeg = ShotControlTuning.angleOffsetDeg;
+        p.hoodAngleBoostDeg = ShotControlTuning.hoodAngleBoostDeg;
         p.globalGoal = true;
         p.goalTrimXcm = ShotControlTuning.goalTrimXcm;
         p.goalTrimYcm = ShotControlTuning.goalTrimYcm;
