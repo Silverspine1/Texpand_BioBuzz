@@ -32,8 +32,6 @@ public final class ReducedShotController {
         public double rpmScale = 1.0;
         /** FIELD TUNING 2: the real exit angle minus the model's [deg] (+ = real shot steeper). 0 = Python parity. */
         public double angleOffsetDeg = 0.0;
-        /** Real exit angle minus the model's at the top hood stop [deg] (0 at the bottom stop, linear between). */
-        public double hoodAngleBoostDeg = 0.0;
         /** true: aim at the CLOSE (audience-side) cell of the alliance as a global point (red = the model's cell, blue = its mirror
          *  across the field centre line) plus the trim below, and the pose is not rotated for blue. false: the model's own aim point,
          *  blue rotated 180 deg (Python parity runs). */
@@ -380,7 +378,6 @@ public final class ReducedShotController {
         m.rpmMax = P.rpmMaxCeiling > 0.0 ? Math.min(modelRpmMax, P.rpmMaxCeiling / s) : modelRpmMax;
         rpmMaxEff = m.rpmMax * s;
         targeter.angleOffsetDeg = P.angleOffsetDeg;
-        targeter.hoodAngleBoostDeg = P.hoodAngleBoostDeg;
         if (nowS - lastShotS > P.burstResetS) shotIndex = 0;
         double spacing = shotIndex >= 1 ? (nowS - lastShotS) + m.fireS : 0.0;
 

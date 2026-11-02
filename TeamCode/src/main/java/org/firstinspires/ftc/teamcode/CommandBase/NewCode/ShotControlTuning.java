@@ -14,7 +14,7 @@ import java.util.Properties;
  * The only shot command source (the old Shotplanner is deleted).
  * Edit live in FTC Dashboard; gamepad2 START in Test_tele saves to {@code /sdcard/FIRST/settings/shot_control.properties}.
  *
- * <p>Model: ONE file, {@code robot_model_red_audience_r4.json}, built into the app (TeamCode/src/main/assets/). Nothing on the
+ * <p>Model: ONE file, {@code robot_model_red_audience_r5.json}, built into the app (TeamCode/src/main/assets/). Nothing on the
  * hub overrides it (no /sdcard model, no field-tune export); to change the model replace that asset and rebuild.
  */
 @Config
@@ -56,14 +56,6 @@ public class ShotControlTuning {
     // toward red). LEFT TRIGGER held = the coarse step. BACK = trim back to 0.
     public static double goalStepCm = 1.0;
     public static double goalStepCoarseCm = 5.0;
-
-    // HOOD ANGLE (the second thing to tune; gamepad2 RIGHT STICK UP / DOWN = +- hoodAngleStepDeg, LEFT TRIGGER held = the coarse step).
-    // How much STEEPER the real exit angle is than the model's at the TOP hood stop, in degrees (0 at the bottom stop, linear between).
-    // Close shots fly too high / land short and need a big rpmScale -> raise it (UP): the hood then sits lower for the same shot.
-    // Close shots fly too flat -> lower it (DOWN, negative values are fine). Far shots (hood 0) never change.
-    public static double hoodAngleBoostDeg = 0.0;
-    public static double hoodAngleStepDeg = 0.5;
-    public static double hoodAngleStepCoarseDeg = 2.0;
 
     // Dashboard only (no buttons any more). rpmScale: real wheel rpm = model rpm x rpmScale (1.0 = the contact sim as built).
     // angleOffsetDeg: the real exit angle minus the model's [deg]. Both were tuned on the wrong goal position before 2026-11-02, so
@@ -222,15 +214,11 @@ public class ShotControlTuning {
         }
         final double step = cur.left_trigger > 0.5 ? goalStepCoarseCm : goalStepCm;
         String s = null;
-        final double hStep = cur.left_trigger > 0.5 ? hoodAngleStepCoarseDeg : hoodAngleStepDeg;
-        final boolean up = cur.right_stick_y < -0.6, down = cur.right_stick_y > 0.6;
-        if (up && !(last.right_stick_y < -0.6)) { hoodAngleBoostDeg = round1(hoodAngleBoostDeg + hStep); s = "hood angle boost " + hoodAngleBoostDeg; }
-        if (down && !(last.right_stick_y > 0.6)) { hoodAngleBoostDeg = round1(hoodAngleBoostDeg - hStep); s = "hood angle boost " + hoodAngleBoostDeg; }
         if (cur.dpad_up && !last.dpad_up) { goalTrimXcm = round1(goalTrimXcm + step); s = "goal trim X " + goalTrimXcm; }
         if (cur.dpad_down && !last.dpad_down) { goalTrimXcm = round1(goalTrimXcm - step); s = "goal trim X " + goalTrimXcm; }
         if (cur.dpad_right && !last.dpad_right) { goalTrimYcm = round1(goalTrimYcm + step); s = "goal trim Y " + goalTrimYcm; }
         if (cur.dpad_left && !last.dpad_left) { goalTrimYcm = round1(goalTrimYcm - step); s = "goal trim Y " + goalTrimYcm; }
-        if (cur.back && !last.back) { goalTrimXcm = 0.0; goalTrimYcm = 0.0; hoodAngleBoostDeg = 0.0; s = "goal trim and hood angle boost reset to 0"; }
+        if (cur.back && !last.back) { goalTrimXcm = 0.0; goalTrimYcm = 0.0; s = "goal trim reset to 0"; }
         return s;
     }
 
