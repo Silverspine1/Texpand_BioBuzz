@@ -176,46 +176,21 @@ public class ShooterController extends SubSystem {
 
     public void loadReducedModel() {
         try {
-            String name = ShotControlTuning.modelFile == null || ShotControlTuning.modelFile.trim().isEmpty()
-                    ? ReducedShotModel.MODEL_FILE : ShotControlTuning.modelFile.trim();
-            java.io.File f = ShotControlTuning.settingsFile(name);
-            ReducedShotModel m;
-            String source;
-            if (f.exists()) {
-                m = ReducedShotModel.load(f);
-                source = f.getPath();
-            } else {
-                java.io.InputStream in;
-                try {
-                    in = getOpMode().hardwareMap.appContext.getAssets().open(name);
-                } catch (java.io.IOException e) {
-                    try {                       // e.g. an old file name restored from shot_control.properties
-                        in = getOpMode().hardwareMap.appContext.getAssets().open(BUILT_IN_MODEL);
-                        name = BUILT_IN_MODEL + " (" + ShotControlTuning.modelFile + " not found)";
-                    } catch (java.io.IOException e2) {
-                        reduced.setModel(null);
-                        reducedStatus = "missing: " + name + " is neither in " + f.getParent() + " nor built into the app";
-                        return;
-                    }
-                }
-                try {
-                    m = ReducedShotModel.fromJson(ReducedShotModel.readText(in));
-                } finally {
-                    in.close();
-                }
-                source = "built-in " + name;
+            // THE model: the one file built into the app. No /sdcard override, no field-tune export, no other name.
+            String text;
+            java.io.InputStream in = getOpMode().hardwareMap.appContext.getAssets().open(BUILT_IN_MODEL);
+            try {
+                text = ReducedShotModel.readText(in);
+            } finally {
+                in.close();
             }
-            java.io.File ft = ShotControlTuning.settingsFile(ShotControlTuning.fieldTuneFile == null
-                    || ShotControlTuning.fieldTuneFile.trim().isEmpty()
-                    ? ReducedShotModel.FIELD_TUNE_FILE : ShotControlTuning.fieldTuneFile.trim());
-            if (ShotControlTuning.useFieldTune && ft.exists()) {
-                m.applyFieldTune(ReducedShotModel.readText(ft));
-            }
+            ReducedShotModel m = ReducedShotModel.fromJson(text);
             reduced.setModel(m);
-            reducedStatus = "loaded (" + source + "): " + m.describe();
+            reducedStatus = "loaded (built-in " + BUILT_IN_MODEL + ", " + text.length() + " bytes, hash "
+                    + Integer.toHexString(text.hashCode()) + "): " + m.describe();
         } catch (Throwable t) {
             reduced.setModel(null);
-            reducedStatus = "load failed: " + t.getMessage();
+            reducedStatus = "load failed: " + BUILT_IN_MODEL + " not readable from the app assets (" + t.getMessage() + ")";
         }
     }
 

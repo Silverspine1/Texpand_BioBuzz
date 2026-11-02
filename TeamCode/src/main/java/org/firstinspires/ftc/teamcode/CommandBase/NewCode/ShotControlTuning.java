@@ -14,15 +14,8 @@ import java.util.Properties;
  * The only shot command source (the old Shotplanner is deleted).
  * Edit live in FTC Dashboard; gamepad2 START in Test_tele saves to {@code /sdcard/FIRST/settings/shot_control.properties}.
  *
- * <p>Model: {@link #modelFile} is BUILT INTO the app (TeamCode/src/main/assets/); a file of the same name pushed to
- * {@code /sdcard/FIRST/settings/} overrides it and {@code /sdcard/FIRST/settings/under_shooter_field_tune.json}
- * (optional field-tune export; replaces the shot model). RECOMMENDED model: the R4 export
- * {@code robot_model_red_audience_r4.json} (aim table with P(stay in cell), bearing calibration in occ.f):
- * <pre>
- * adb push outputs/shotcontrol/algos/robot_model_red_audience_r4.json /sdcard/FIRST/settings/
- * </pre>
- * then set {@link #modelFile} to {@code robot_model_red_audience_r4.json} (dashboard), save (gamepad2 START) and reload
- * (gamepad2 X), or push it under the default name.
+ * <p>Model: ONE file, {@code robot_model_red_audience_r4.json}, built into the app (TeamCode/src/main/assets/). Nothing on the
+ * hub overrides it (no /sdcard model, no field-tune export); to change the model replace that asset and rebuild.
  */
 @Config
 public class ShotControlTuning {
@@ -36,14 +29,6 @@ public class ShotControlTuning {
      *  on the Dashboard if the wheel spins the wrong way; Shot Tuner shows a BACKWARDS warning. */
     public static boolean shooterMotorReversed = false;
     public static boolean blueAlliance = true;
-    /** Use the optional field-tune export next to the model when it exists. */
-    public static boolean useFieldTune = true;
-    /** Model file name in /sdcard/FIRST/settings/ (blank = ReducedShotModel.MODEL_FILE). Recommended:
-     *  robot_model_red_audience_r4.json. */
-    public static String modelFile = "robot_model_red_audience_r4.json";
-    /** Field-tune export in /sdcard/FIRST/settings/ applied over the model's shot block (ShotTuner: gamepad2 right stick
-     *  button toggles useFieldTune; change the name here to swap exports, then gamepad2 left stick button reloads). */
-    public static String fieldTuneFile = "under_shooter_field_tune.json";
 
     // Wheel ceiling per battery (R4): rpm_max = min(model rpm_max, fraction x no-load rpm x V / 12). States that need
     // more become infeasible (claim 0) instead of leaving low. No-load 5700 is the sim's flywheel model: MEASURE.
@@ -151,8 +136,8 @@ public class ShotControlTuning {
     // by an older version does not restore them.
     private static final String SETTINGS_VERSION = "4";
     // Version 4 (2026-11-02): back to the r4 model (the r4h hood map was a patch for the wrong goal), so a saved model name is dropped.
-    private static final String[] RESET_BEFORE_V3 = {"rpmScale", "angleOffsetDeg", "turretTrimDeg", "modelFile"};
-    private static final String[] RESET_BEFORE_V4 = {"modelFile"};
+    private static final String[] RESET_BEFORE_V3 = {"rpmScale", "angleOffsetDeg", "turretTrimDeg"};
+    private static final String[] RESET_BEFORE_V4 = {};
 
     private static String loadStatus = "shot_control: not loaded yet";
     private static String saveStatus = "nothing saved yet";
