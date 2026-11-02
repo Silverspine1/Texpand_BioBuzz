@@ -122,7 +122,14 @@ public class ShotTuner extends OpModeEX {
         }
 
         // ---- driver ----
-        driveBase.drivePowers(gamepad1.right_stick_y, -gamepad1.right_stick_x, (gamepad1.left_trigger - gamepad1.right_trigger));
+        // stick UP = away from the driver across the field (field-centric, gamepad1 BACK toggles) or the robot's own axes
+        if (!lastGamepad1.back && currentGamepad1.back) ShotControlTuning.fieldCentricDrive = !ShotControlTuning.fieldCentricDrive;
+        if (ShotControlTuning.fieldCentricDrive) {
+            driveBase.driveFieldCentric(-gamepad1.right_stick_y, gamepad1.right_stick_x, (gamepad1.left_trigger - gamepad1.right_trigger),
+                    odometry.Heading(), ShotControlTuning.blueAlliance, ShotControlTuning.fieldDriveOffsetDeg);
+        } else {
+            driveBase.drivePowers(gamepad1.right_stick_y, -gamepad1.right_stick_x, (gamepad1.left_trigger - gamepad1.right_trigger));
+        }
         IntakeHardware.Vertical = driveBase.vertical;
         if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up && !flyTest) shooterController.targeting = !shooterController.targeting;
         if (!lastGamepad1.right_stick_button && currentGamepad1.right_stick_button) {
@@ -302,6 +309,7 @@ public class ShotTuner extends OpModeEX {
 
     private void telemetryBlock(ReducedShotController r, double now, boolean applicable) {
         put("HOOD", shooterController.hoodStatusLine());
+        put("DRIVE", ShotControlTuning.fieldCentricDrive ? "FIELD-CENTRIC (gamepad1 BACK = robot-centric)" : "ROBOT-CENTRIC (gamepad1 BACK = field-centric)");
         say("TUNE: " + ShotControlTuning.tuneLine());
         say(ShotControlTuning.gateProtect
                 ? "=== MOVEMENT PROTECTION: ON  (gamepad1 B turns it OFF) ==="

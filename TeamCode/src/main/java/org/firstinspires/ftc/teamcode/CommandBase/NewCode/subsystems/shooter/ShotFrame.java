@@ -27,8 +27,10 @@ package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter;
  */
 public final class ShotFrame {
 
-    /** Field inner width [in] (= Python {@code api.FIELD_WIDTH_IN}). */
-    public static final double W_IN = 141.348;
+    /** Field inner width [in] the model was built for (= Python {@code api.FIELD_WIDTH_IN}, CAD inner faces of the walls). */
+    public static final double W_MODEL_IN = 141.348;
+    /** Real field inner width [in] (ShotControlTuning.fieldWidthCm). The hive sits at the field centre, so the goal moves with it. */
+    public static double W_IN = W_MODEL_IN;
     public static final double CM_PER_IN = 2.54;
     public static final double M_PER_IN = 0.0254;
 

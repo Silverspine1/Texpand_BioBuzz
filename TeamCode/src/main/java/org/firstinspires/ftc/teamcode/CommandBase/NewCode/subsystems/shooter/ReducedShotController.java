@@ -32,6 +32,10 @@ public final class ReducedShotController {
         public double rpmScale = 1.0;
         /** FIELD TUNING 2: the real exit angle minus the model's [deg] (+ = real shot steeper). 0 = Python parity. */
         public double angleOffsetDeg = 0.0;
+        /** Goal position correction [in, team frame]: Far = away from the wall you shoot from, Right = to your right facing the goal. */
+        public double aimShiftFarIn = 0.0, aimShiftRightIn = 0.0;
+        /** Multiplies the commanded turret angle (1 = off). */
+        public double turretScale = 1.0;
         /** Battery-limited wheel ceiling [rpm] (R4: ~0.98 x no-load rpm x V/12); <= 0 = the model's rpm_max.
          *  The solve clamps to min(model rpm_max, this): a state that needs more becomes infeasible, claim 0. */
         public double rpmMaxCeiling = 0.0;
@@ -92,7 +96,7 @@ public final class ReducedShotController {
     private final ShotFrame frame = new ShotFrame();
     private final double[] piv = new double[2];
     private ReducedTargeter targeter;
-    private double modelPivotFwd, modelPivotRight, modelRpmMax;
+    private double modelPivotFwd, modelPivotRight, modelRpmMax, modelAimX, modelAimY;
 
     // outputs
     public double rpmCmd, hoodDeg, turretJavaDeg, turretTeamDeg, pMake;
@@ -117,6 +121,61 @@ public final class ReducedShotController {
     private double accSolvePrevS = Double.NaN, accSolvePrevVx, accSolvePrevVy, estAx, estAy;
     public long solveNanos, maxSolveNanos, lookNanos, gateNanos;
     public double teamX, teamY, teamHeading, teamVx, teamVy;
+
+    /** Two-spot goal measurement (gamepad2 stick buttons in Test_tele). */
+    public final GoalFinder goalFinder = new GoalFinder();
+    public String goalFinderStatus = "stand at a spot, trim the turret until the ball lands in the goal, click LEFT stick";
+
+    /**
+     * Records the current spot: the turret axis (TEAM frame) and the azimuth the turret is pointing at now (the Java turret
+     * command incl. trim / scale, taken as where it really points).
+     */
+    public void recordGoalSpot() {
+        ReducedShotModel m = model();
+        if (m == null) {
+            goalFinderStatus = "no model";
+            return;
+        }
+        double h = Math.toRadians(teamHeading);
+        double qx = teamX + m.pivotFwdIn * Math.cos(h) - m.pivotRightIn * Math.sin(h);
+        double qy = teamY + m.pivotFwdIn * Math.sin(h) + m.pivotRightIn * Math.cos(h);
+        double psi = teamHeading + ShotFrame.turretJavaToTeam(turretJavaDeg);
+        if (!goalFinder.add(qx, qy, psi)) {
+            goalFinderStatus = "full: right stick click applies / clears";
+            return;
+        }
+        if (goalFinder.solve()) {
+            goalFinderStatus = String.format(java.util.Locale.US, "%d spots: goal at x %.1f in, y %.1f in (the model aims at %.1f, %.1f); rays miss by %.2f in. Right stick click applies",
+                    goalFinder.n, goalFinder.goalX, goalFinder.goalY, m.aimX, m.aimY, goalFinder.rmsIn);
+        } else {
+            goalFinderStatus = String.format(java.util.Locale.US, "%d spot(s) recorded; need two at least %.0f deg apart (now %.0f deg): move sideways and record again",
+                    goalFinder.n, GoalFinder.MIN_SPREAD_DEG, goalFinder.spreadDeg());
+        }
+    }
+
+    /**
+     * Converts the measured goal into the aim shifts (the caller writes them to ShotControlTuning and clears the turret trim;
+     * this class stays free of the FTC SDK) and clears the spots.
+     * @return false without a solution (spots cleared anyway)
+     */
+    public boolean applyGoalFound() {
+        ReducedShotModel m = model();
+        if (m == null || !goalFinder.solve()) {
+            goalFinder.clear();
+            goalFinderStatus = "cleared (no solution to apply)";
+            return false;
+        }
+        double half = 0.5 * (ShotFrame.W_IN - ShotFrame.W_MODEL_IN);
+        foundFarCm = (goalFinder.goalX - modelAimX - half) * ShotFrame.CM_PER_IN;
+        foundRightCm = (goalFinder.goalY - modelAimY - half) * ShotFrame.CM_PER_IN;
+        goalFinderStatus = String.format(java.util.Locale.US, "APPLIED: aimShiftFarCm %.1f, aimShiftRightCm %.1f, turret trim cleared (START saves)",
+                foundFarCm, foundRightCm);
+        goalFinder.clear();
+        return true;
+    }
+
+    /** aimShiftFarCm / aimShiftRightCm that put the model's aim point on the measured goal (valid after applyGoalFound() = true). */
+    public double foundFarCm, foundRightCm;
 
     // burst bookkeeping
     public int shotIndex = 0, shotsDetected = 0;
@@ -150,6 +209,8 @@ public final class ReducedShotController {
         }
         modelPivotFwd = m.pivotFwdIn;
         modelPivotRight = m.pivotRightIn;
+        modelAimX = m.aimX;
+        modelAimY = m.aimY;
         modelRpmMax = m.rpmMax;
         rpmMaxEff = m.rpmMax;
         targeter = new ReducedTargeter(m);
@@ -335,6 +396,10 @@ public final class ReducedShotController {
             m.pivotFwdIn = modelPivotFwd;
             m.pivotRightIn = modelPivotRight;
         }
+        // the model's goal moves with the real field width (the hive is at the field centre); the user aim shift below moves
+        // the AZIMUTH only, so range / rpm / hood keep their meaning
+        m.aimX = modelAimX + 0.5 * (ShotFrame.W_IN - ShotFrame.W_MODEL_IN);
+        m.aimY = modelAimY + 0.5 * (ShotFrame.W_IN - ShotFrame.W_MODEL_IN);
         // battery ceiling (R4 7.1 item 5): the solve clamps the inverse and the burst command to it. The solve works in MODEL
         // rpm; the real wheel turns rpmScale x that, so the real ceiling is ceiling / rpmScale in model rpm.
         double s = P.rpmScale > 0.05 ? P.rpmScale : 1.0;
@@ -400,7 +465,16 @@ public final class ReducedShotController {
         rpmAtReleaseReal = cmd.rpmAtRelease * s;
         hoodDeg = Math.min(Math.max(cmd.hoodDeg + P.hoodTrimDeg, m.shotHood[0]), m.shotHood[m.nH - 1]);
         turretTeamDeg = result.turretDeg - (P.useModelTurretLead ? 0.0 : result.turretLeadDeg);
-        turretJavaDeg = ShotFrame.turretTeamToJava(turretTeamDeg) + P.turretTrimDeg;
+        if (P.aimShiftFarIn != 0.0 || P.aimShiftRightIn != 0.0) {
+            // azimuth to the shifted goal minus azimuth to the model goal, seen from the turret axis
+            double hq = Math.toRadians(teamHeading);
+            double qx = teamX + m.pivotFwdIn * Math.cos(hq) - m.pivotRightIn * Math.sin(hq);
+            double qy = teamY + m.pivotFwdIn * Math.sin(hq) + m.pivotRightIn * Math.cos(hq);
+            double b0 = Math.atan2(m.aimY - qy, m.aimX - qx);
+            double b1 = Math.atan2(m.aimY + P.aimShiftRightIn - qy, m.aimX + P.aimShiftFarIn - qx);
+            turretTeamDeg += wrap180(Math.toDegrees(b1 - b0));
+        }
+        turretJavaDeg = ShotFrame.turretTeamToJava(turretTeamDeg) * P.turretScale + P.turretTrimDeg;
         pMake = result.pMake;
         feasible = result.feasible;
 

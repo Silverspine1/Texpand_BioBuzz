@@ -75,6 +75,24 @@ public class ShotControlTuning {
     //   near SHORT + far LONG -> steeper -> INCREASE (D-pad RIGHT). gamepad2 D-pad LEFT / RIGHT = -/+ angleOffsetStepDeg.
     public static double angleOffsetDeg = 0.0;
     public static double angleOffsetStepDeg = 0.5;
+    // ---- WHERE THE GOAL IS (fan-out misses: far right -> miss right, far left -> miss left, centre fine) ----
+    // Real distance between the INNER faces of two opposite walls [cm], tape measure. The model assumes 359.02 (CAD). The hive
+    // is at the field centre, so a wider field moves the goal (half the difference on each axis) and, for the blue alliance,
+    // the 180 deg mirror of your pose. Do not enter the nominal 365.76 unless the tape says so.
+    public static double fieldWidthCm = 359.02;
+    // Goal position correction [cm] for the AZIMUTH only (the turret bearing; range, rpm and hood are not touched), in YOUR alliance's
+    // frame: Far = farther from the wall you shoot from, Right = to your right when you face the goal. gamepad2 LEFT stick click
+    // (Test_tele) records a spot, RIGHT stick click measures both numbers for you (GOAL FINDER). Typed by hand: -2, -4 ...
+    public static double aimShiftFarCm = 0.0;
+    public static double aimShiftRightCm = 0.0;
+    // Turret angle gain: the commanded turret angle is multiplied by this. Misses that grow with how far the turret has to
+    // turn (also when you only rotate the robot) -> 1.01, 1.02 ... (turret turns less than the encoder says). 1.0 = off.
+    public static double turretScale = 1.0;
+
+    // gamepad1 BACK toggles. Field-centric: stick UP = away from the driver across the field, whatever the robot's heading.
+    // fieldDriveOffsetDeg rotates that stick frame (0 = driver stands at his own alliance wall; + = toward increasing heading).
+    public static boolean fieldCentricDrive = true;
+    public static double fieldDriveOffsetDeg = 0.0;
     // ==========================================================================================================================
     // Turret aim trim (not a model value): hold gamepad2 LEFT TRIGGER + D-pad LEFT / RIGHT.
     public static double turretTrimDeg = 0.0;

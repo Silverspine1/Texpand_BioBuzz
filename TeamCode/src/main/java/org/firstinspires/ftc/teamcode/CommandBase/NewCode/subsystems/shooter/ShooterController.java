@@ -373,6 +373,10 @@ public class ShooterController extends SubSystem {
         p.useModelTurretLead = ShotControlTuning.useModelTurretLead;
         p.rpmScale = ShotControlTuning.rpmScale;
         p.angleOffsetDeg = ShotControlTuning.angleOffsetDeg;
+        p.aimShiftFarIn = ShotControlTuning.aimShiftFarCm / ShotFrame.CM_PER_IN;
+        p.aimShiftRightIn = ShotControlTuning.aimShiftRightCm / ShotFrame.CM_PER_IN;
+        p.turretScale = ShotControlTuning.turretScale > 0.5 ? ShotControlTuning.turretScale : 1.0;
+        ShotFrame.W_IN = ShotControlTuning.fieldWidthCm > 300.0 ? ShotControlTuning.fieldWidthCm / ShotFrame.CM_PER_IN : ShotFrame.W_MODEL_IN;
         p.turretTrimDeg = ShotControlTuning.turretTrimDeg;
         p.gateProtect = ShotControlTuning.gateProtect;
         p.gateTurRelTolDeg = ShotControlTuning.gateTurRelTolDeg;
