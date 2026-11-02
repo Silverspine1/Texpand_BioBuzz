@@ -17,13 +17,13 @@ public class ShooterTuning {
 
     private static final String FILE_NAME = "shooter_tune.properties";
 
-    // Bumped when defaults change meaning; values listed in RESET_ON_UPGRADE are then taken from the new defaults.
-    private static final String SETTINGS_VERSION = "2";
-    private static final String[] RESET_ON_UPGRADE = {"flywheelTicksPerRev", "flywheelKF"};
+    // Bumped when the code defaults must win once: a file saved by an older version is ignored (built-in defaults) until the
+    // next save writes this version. Version 3 (2026-11-02): turret axis on the robot centre, model r10.
+    private static final String SETTINGS_VERSION = "3";
 
     // The old Shotplanner's shot physics, hood launch-angle mapping and goal positions are deleted: the reduced model
     // (ShotControlTuning) owns the goal, the hood (hoodServoPosAtZero / AtMax) and the rpm.
-    public static double turretAxisForwardMeters = 0.05;
+    public static double turretAxisForwardMeters = 0.0;
     // (ShotControlTuning) owns the goal, the hood (hoodBottomPos / hoodTopPos) and the rpm.
     // Sideways offset of the turret axis from the odometry point. Positive is toward the side heading increases toward.
     public static double turretAxisSidewaysMeters = 0.0;
@@ -81,8 +81,12 @@ public class ShooterTuning {
                 return 0;
             }
             Properties p = TuningIO.read(file);
-            boolean upgraded = !SETTINGS_VERSION.equals(p.getProperty("settingsVersion"));
-            TuningIO.Loaded r = TuningIO.load(ShooterTuning.class, p, false, new String[0], RESET_ON_UPGRADE, upgraded);
+            if (!SETTINGS_VERSION.equals(p.getProperty("settingsVersion"))) {
+                loadStatus = "shooter: saved file is version " + p.getProperty("settingsVersion") + ", not " + SETTINGS_VERSION
+                        + " -> IGNORED this run, built-in defaults (save to keep them)";
+                return 0;
+            }
+            TuningIO.Loaded r = TuningIO.load(ShooterTuning.class, p, false, new String[0], new String[0], false);
             loadStatus = TuningIO.describe("shooter", file, r);
             return r.applied;
         } catch (Throwable t) {
