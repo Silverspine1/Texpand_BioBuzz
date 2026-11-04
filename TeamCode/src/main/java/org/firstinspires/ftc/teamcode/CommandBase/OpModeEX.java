@@ -6,7 +6,7 @@ import com.qualcomm.robotcore.hardware.Gamepad;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.CommandBase.old_referance.DriveBase;
-import org.firstinspires.ftc.teamcode.CommandBase.old_referance.Odometry;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Localisation.Odometry;
 
 import dev.weaponboy.nexus_command_base.OpmodeEX.Scheduler;
 import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
@@ -15,10 +15,11 @@ import java.util.List;
 
 public abstract class OpModeEX extends OpMode {
 
+    public Odometry odometry = new Odometry(this);
 
 
     private final Scheduler scheduler = new Scheduler(this,
-            new SubSystem[] {});
+            new SubSystem[] {odometry});
 
     List<LynxModule> allHubs;
 
