@@ -28,19 +28,19 @@ import java.util.concurrent.atomic.AtomicReference;
 public class pipeline implements VisionProcessor, CameraStreamSource {
 
     // HSV thresholds, OpenCV ranges: H 0-179, S/V 0-255. Edit live in FTC Dashboard.
-    public static double H_LOW = 40, H_HIGH = 85;
-    public static double S_LOW = 80, S_HIGH = 255;
-    public static double V_LOW = 60, V_HIGH = 255;
+    public static double H_LOW = 10, H_HIGH = 29;
+    public static double S_LOW = 100, S_HIGH = 255;
+    public static double V_LOW = 160, V_HIGH = 255;
     public static double MIN_AREA = 300;
 
     // 0 = camera + overlay, 1 = mask only, 2 = camera masked by threshold
     public static int VIEW = 0;
 
     // Camera placement relative to robot center (inches / degrees). Robot frame: +x forward, +y left.
-    public static double CAM_HEIGHT = 10;
-    public static double CAM_TILT_DOWN_DEG = 30;
-    public static double CAM_H_FOV_DEG = 60;
-    public static double CAM_FORWARD = 0;
+    public static double CAM_HEIGHT = 8.661417;
+    public static double CAM_TILT_DOWN_DEG = 50;
+    public static double CAM_H_FOV_DEG = 120;
+    public static double CAM_FORWARD = 7.086614;
     public static double CAM_LEFT = 0;
     public static double CAM_YAW_DEG = 0;
     // Height of the target's center above the floor
@@ -75,6 +75,7 @@ public class pipeline implements VisionProcessor, CameraStreamSource {
         Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_OPEN, kernel);
         Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_CLOSE, kernel);
 
+        // find contours of ???
         List<MatOfPoint> contours = new ArrayList<>();
         Mat hierarchy = new Mat();
         // findContours may modify its input, so give it a copy
@@ -83,6 +84,7 @@ public class pipeline implements VisionProcessor, CameraStreamSource {
                 Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
         hierarchy.release();
 
+        // Find the contour with the largest area
         Rect best = null;
         double bestArea = MIN_AREA;
         for (MatOfPoint c : contours) {
@@ -94,10 +96,12 @@ public class pipeline implements VisionProcessor, CameraStreamSource {
             c.release();
         }
 
+        // Get the HSV at the center of the frame
         int w = frame.cols(), h = frame.rows();
         int cx = w / 2, cy = h / 2;
         centerHsv = hsv.get(cy, cx);
 
+        //
         Point ctr = null;
         double[] tHsv = null;
         double[] xy = null;
@@ -127,6 +131,7 @@ public class pipeline implements VisionProcessor, CameraStreamSource {
         putLabel(frame, String.format("Thresh H %.0f-%.0f S %.0f-%.0f V %.0f-%.0f",
                 H_LOW, H_HIGH, S_LOW, S_HIGH, V_LOW, V_HIGH), 38, white);
         if (best != null) {
+            Imgproc.drawContours(mask,contours,-1, Scalar.all(10));
             Imgproc.rectangle(frame, best.tl(), best.br(), green, 3);
             putLabel(frame, String.format("Target HSV %.0f %.0f %.0f",
                     tHsv[0], tHsv[1], tHsv[2]), 58, green);

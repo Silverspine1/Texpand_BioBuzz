@@ -41,9 +41,18 @@ public class testingOneWebcams extends LinearOpMode
         while (opModeIsActive())
         {
             Point c = proc.getCenter();
+
             double[] centerHsv = proc.getCenterHsv();
             double[] targetHsv = proc.getTargetHsv();
             double[] xy = proc.getRobotXY();
+
+     /*       double cx = 0, cy = 0;
+
+            if (centerHsv != null) {
+                cx = centerHsv[1];
+                cy = centerHsv[2];
+            }*/
+
 
             telemetry.addData("Camera state", portal.getCameraState());
             telemetry.addData("FPS", "%.1f", portal.getFps());
@@ -54,8 +63,10 @@ public class testingOneWebcams extends LinearOpMode
                     : String.format("%.0f %.0f %.0f", targetHsv[0], targetHsv[1], targetHsv[2]));
             telemetry.addData("Robot-relative (fwd, left) in", xy == null ? "none"
                     : String.format("%.1f, %.1f", xy[0], xy[1]));
+          //  telemetry.addData("cx: ",cx);
+         //   telemetry.addData("cy: ",cy);
             telemetry.update();
-            sleep(20);
+            //sleep(20);
         }
 
         dashboard.stopCameraStream();
