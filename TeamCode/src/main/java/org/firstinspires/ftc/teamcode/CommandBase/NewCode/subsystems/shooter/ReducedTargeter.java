@@ -56,6 +56,10 @@ public final class ReducedTargeter {
     /** > 0: the hive-occlusion map is the RED goal's; a goal on the other side of the field centre line is its mirror image, so the
      *  map is read at y -> occMirrorW - y (the field width). 0 = as exported. */
     public double occMirrorW = 0.0;
+    /** > 0: the goal is the model cell's mirror image across the hive centre line (the FAR / scoring-side cell of the same hive), so the
+     *  map is read at x -> occMirrorX - x (the field width). The aim table itself is symmetric in the line of sight, so nothing else changes.
+     *  0 = as exported. */
+    public double occMirrorX = 0.0;
 
     // scratch outputs of bicubic() / trilinear() (no allocation)
     private double bv, bdr, bdh;
@@ -372,8 +376,9 @@ public final class ReducedTargeter {
         if (C.hasOcc) {
             // hive occlusion (position-dependent, the aim table cannot see it): un-blocked fraction at the pivot
             double qyOcc = occMirrorW > 0.0 ? occMirrorW - qy : qy;
-            double fOcc = bilinear(C.occX, C.occY, C.occF, qx, qyOcc);
-            double sStay = bilinear(C.occX, C.occY, C.occStay, qx, qyOcc);
+            double qxOcc = occMirrorX > 0.0 ? occMirrorX - qx : qx;
+            double fOcc = bilinear(C.occX, C.occY, C.occF, qxOcc, qyOcc);
+            double sStay = bilinear(C.occX, C.occY, C.occStay, qxOcc, qyOcc);
             out.occF = fOcc;
             out.pStay = p * fOcc * sStay;
             p = p * fOcc;

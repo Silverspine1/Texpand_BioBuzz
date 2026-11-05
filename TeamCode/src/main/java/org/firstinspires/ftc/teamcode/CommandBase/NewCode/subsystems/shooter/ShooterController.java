@@ -8,6 +8,7 @@ import com.qualcomm.robotcore.util.ElapsedTime;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.ShooterTuning;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.ShotControlTuning;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Localisation.Odometry;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingValues;
 import org.firstinspires.ftc.teamcode.CommandBase.LoopProfiler;
 import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
 
@@ -161,7 +162,7 @@ public class ShooterController extends SubSystem {
      * Then the optional field-tune export. Never throws: a bad file leaves no model (flywheel off, status says why).
      */
     /** The model file bundled in TeamCode/src/main/assets/ (fallback when ShotControlTuning.modelFile is not found). */
-    public static final String BUILT_IN_MODEL = "robot_model_red_audience_r10.json";
+    public static final String BUILT_IN_MODEL = "robot_model_red_audience_r11.json";
 
     /** One short line for the top of every display: model, targeting, range, hood command and the servo position written. */
     public String hoodStatusLine() {
@@ -370,6 +371,13 @@ public class ShooterController extends SubSystem {
         p.gateLookEps = ShotControlTuning.gateLookEps;
         p.gateLookAhead = ShotControlTuning.gateLookAhead;
         p.gateWindowS = ShotControlTuning.gateWindowS;
+        p.velCompScale = ShotControlTuning.velocityCompScale;
+        p.accelCompScale = ShotControlTuning.accelCompScale;
+        p.goalSideAuto = ShotControlTuning.goalSideAuto;
+        p.goalForceFarCell = ShotControlTuning.goalForceFarCell;
+        p.goalSideHysteresisIn = ShotControlTuning.goalSideHysteresisIn;
+        p.driveIntentGain = ShotControlTuning.driveIntentGain;
+        p.driveTauS = PathingValues.TAU_FWD;
         // battery wheel ceiling (R4): fraction x no-load x V/12; reads are slow, so every 0.5 s
         if (battery != null && batteryTimer.seconds() > 0.5) {
             batteryTimer.reset();

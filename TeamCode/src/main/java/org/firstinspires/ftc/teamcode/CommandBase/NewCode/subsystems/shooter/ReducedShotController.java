@@ -70,6 +70,25 @@ public final class ReducedShotController {
         public boolean gateLookAhead = true;
         /** Driver window after {@link #requestShot} [s] (gate bench: 1.0; the gate rarely waits > 0.15 s). */
         public double gateWindowS = 1.0;
+        // shooting while moving: how much of the robot's own motion the shot compensates (Dashboard, ShotControlTuning)
+        /** Multiplies the chassis VELOCITY the solve sees (rpm, hood and turret compensation for driving): 1 = full, 0 = none. The gate's
+         *  own motion checks keep the real velocity. */
+        public double velCompScale = 1.0;
+        /** Multiplies the chassis ACCELERATION the solve sees (estimated or passed in, after the accelMaxIps2 clamp). */
+        public double accelCompScale = 1.0;
+        // which cell of the hive is aimed at (needs globalGoal)
+        /** true: aim at the cell on the SIDE OF THE HIVE the robot is on (team x below the hive centre = the audience-side cell, above = the
+         *  far / scoring-side cell), with goalSideHysteresisIn of hysteresis; no hive state is read. false: the audience cell, or the far
+         *  cell when goalForceFarCell. */
+        public boolean goalSideAuto = false;
+        public boolean goalForceFarCell = false;
+        public double goalSideHysteresisIn = 4.0;
+        // the driver's stick as a leading indicator for the turret (0 = off)
+        /** Turret only: solve a second time with the acceleration the stick asks for, (cmd velocity - velocity) / driveTauS clipped to
+         *  the drive's limits, times this gain, and take that solve's turret angle. rpm / hood / claim / gate stay those of the first solve. */
+        public double driveIntentGain = 0.0;
+        public double driveTauS = 0.15;
+        public double driveMaxAccelIps2 = 250.0, driveMaxDecelIps2 = 354.0;
         // bursts
         public boolean detectShotsFromRpm = false;
         public double detectDropFraction = 0.5;
@@ -127,7 +146,21 @@ public final class ReducedShotController {
     public double rpmModelCmd, accelX, accelY;
     private double accSolvePrevS = Double.NaN, accSolvePrevVx, accSolvePrevVy, estAx, estAy;
     public long solveNanos, maxSolveNanos, lookNanos, gateNanos;
-    public double teamX, teamY, teamHeading, teamVx, teamVy;
+    public double teamX, teamY, teamHeading, teamVx, teamVy, teamOmega;
+    /** true: the last solve aimed at the FAR (scoring-side) cell of the hive, false: the audience-side cell. */
+    public boolean goalFarCell;
+    /** Acceleration the stick asked for (team frame, in/s^2, after the gain) used by the last turret solve; 0 when the intent is off. */
+    public double intentAx, intentAy;
+    // the state the targeter saw in the last solve (velocity / acceleration after the compensation scales): the drive probes use it
+    private double sX, sY, sH, sVx, sVy, sOm, sAx, sAy, sSpacing;
+    private int sIdx;
+    private boolean haveSolve;
+    // the stick's command velocity (team frame, in/s)
+    private double intentVx, intentVy;
+    private boolean intentValid;
+    private final ShotFrame probeFrame = new ShotFrame();
+    private final ReducedTargeter.Result probe0 = new ReducedTargeter.Result(), probe1 = new ReducedTargeter.Result(),
+            probe2 = new ReducedTargeter.Result(), intentR = new ReducedTargeter.Result();
 
     // burst bookkeeping
     public int shotIndex = 0, shotsDetected = 0;
@@ -321,6 +354,40 @@ public final class ReducedShotController {
         }
     }
 
+    /** Turret command rate the solver would produce [deg/s]: {@code out[0] = a}, the part caused by the translation the stick asks for
+     *  (the chassis velocity relaxing toward the stick's command over {@code lookS} with time constant {@code tauS}), and
+     *  {@code out[1] = b}, the part per deg/s of chassis yaw rate (a probe of {@code yawProbeDps}). Three solves from the state of the
+     *  LAST {@link #solve} (same goal, same compensation scales); call it between solves, never inside one. Returns false before the
+     *  first solve.
+     *  @param cmdVxMps,cmdVyMps the stick's command velocity, Java field frame [m/s] */
+    public boolean turretRateProbe(double cmdVxMps, double cmdVyMps, double tauS, double lookS, double yawProbeDps, double[] out) {
+        if (targeter == null || !haveSolve || !(lookS > 0.0) || !(yawProbeDps != 0.0)) return false;
+        probeFrame.toTeam(false, 0.0, 0.0, 0.0, cmdVxMps, cmdVyMps, 0.0, 0.0, 0.0);
+        double cvx = probeFrame.vx * params.velCompScale, cvy = probeFrame.vy * params.velCompScale;
+        double k = 1.0 - Math.exp(-lookS / Math.max(1e-3, tauS));
+        double vex = sVx + (cvx - sVx) * k, vey = sVy + (cvy - sVy) * k;
+        targeter.solve(sX, sY, sH, sVx, sVy, sOm, sAx, sAy, sIdx, sSpacing, probe0);
+        targeter.solve(sX + 0.5 * (sVx + vex) * lookS, sY + 0.5 * (sVy + vey) * lookS, sH, vex, vey, sOm, sAx, sAy,
+                sIdx, sSpacing, probe1);
+        targeter.solve(sX, sY, sH + yawProbeDps * lookS, sVx, sVy, sOm + yawProbeDps, sAx, sAy, sIdx, sSpacing, probe2);
+        out[0] = wrap180(probe1.turretDeg - probe0.turretDeg) / lookS;
+        out[1] = wrap180(probe2.turretDeg - probe0.turretDeg) / lookS / yawProbeDps;
+        return true;
+    }
+
+    /** The stick's command velocity for the turret lead ({@link Params#driveIntentGain}), Java field frame [m/s]. Call every loop. */
+    public void setDriveIntent(double cmdVxMps, double cmdVyMps) {
+        probeFrame.toTeam(false, 0.0, 0.0, 0.0, cmdVxMps, cmdVyMps, 0.0, 0.0, 0.0);
+        intentVx = probeFrame.vx;
+        intentVy = probeFrame.vy;
+        intentValid = true;
+    }
+
+    /** No stick intent (vision collect, targeting off): the turret solve is the plain one. */
+    public void clearDriveIntent() {
+        intentValid = false;
+    }
+
     /**
      * Solve for the current state (call at the planner period the turret was tuned with; it is cheap enough for
      * every loop). Updates {@link #rpmCmd}, {@link #hoodDeg}, {@link #turretJavaDeg}, {@link #pMake},
@@ -351,8 +418,19 @@ public final class ReducedShotController {
         // the goal: the alliance's CLOSE cell (red = the model's own, blue = its mirror image across the field centre line: the field is
         // mirror symmetric, not rotation symmetric) + the trim, as a global point; both alliances use the global field frame
         final boolean globalGoal = P.globalGoal;
+        // a global goal point: the pose goes in unrotated whatever the alliance (the red team frame = the Java field frame)
+        frame.toTeam(globalGoal ? false : P.blueAlliance, xCm, yCm, headingDeg, vxMps, vyMps, omegaDps, axMps2, ayMps2);
+        // which cell of the hive: the one on the robot's side (team x vs the hive centre, with hysteresis), or the forced one
+        if (globalGoal && P.goalSideAuto) {
+            double mid = 0.5 * ShotFrame.W_IN, band = Math.max(0.0, P.goalSideHysteresisIn);
+            if (frame.x > mid + band) goalFarCell = true;
+            else if (frame.x < mid - band) goalFarCell = false;
+        } else {
+            goalFarCell = globalGoal && P.goalForceFarCell;
+        }
         if (globalGoal) {
-            double gx = modelAimX, gy = P.blueAlliance ? ShotFrame.W_IN - modelAimY : modelAimY;
+            double gx = goalFarCell ? ShotFrame.W_IN - modelAimX : modelAimX;
+            double gy = P.blueAlliance ? ShotFrame.W_IN - modelAimY : modelAimY;
             ShotFrame.redTeamInToJavaCm(gx, gy, goalTeam);
             goalDefaultXcm = goalTeam[0];
             goalDefaultYcm = goalTeam[1];
@@ -361,10 +439,13 @@ public final class ReducedShotController {
             m.aimY = gy + goalTeam[1];
             // the occlusion map is the red hive cell's: the blue cell reads it mirrored across the centre line
             targeter.occMirrorW = P.blueAlliance ? ShotFrame.W_IN : 0.0;
+            // the far cell is the model cell reflected across the hive centre line: its map is read at x -> W - x
+            targeter.occMirrorX = goalFarCell ? ShotFrame.W_IN : 0.0;
         } else {
             m.aimX = modelAimX;
             m.aimY = modelAimY;
             targeter.occMirrorW = 0.0;
+            targeter.occMirrorX = 0.0;
             goalDefaultXcm = modelAimX * ShotFrame.CM_PER_IN;
             goalDefaultYcm = modelAimY * ShotFrame.CM_PER_IN;
         }
@@ -381,13 +462,13 @@ public final class ReducedShotController {
         if (nowS - lastShotS > P.burstResetS) shotIndex = 0;
         double spacing = shotIndex >= 1 ? (nowS - lastShotS) + m.fireS : 0.0;
 
-        // a global goal point: the pose goes in unrotated whatever the alliance (the red team frame = the Java field frame)
-        frame.toTeam(globalGoal ? false : P.blueAlliance, xCm, yCm, headingDeg, vxMps, vyMps, omegaDps, axMps2, ayMps2);
+        // frame.toTeam() was done above (the goal side needs the team x)
         teamX = frame.x;
         teamY = frame.y;
         teamHeading = frame.headingDeg;
         teamVx = frame.vx;
         teamVy = frame.vy;
+        teamOmega = frame.omegaDps;
         double ax = frame.ax, ay = frame.ay;
         if (P.estimateAccel) {
             double dtA = nowS - accSolvePrevS;
@@ -406,25 +487,52 @@ public final class ReducedShotController {
             ax = estAx * c;
             ay = estAy * c;
         }
+        // the compensation scales act on what the SOLVE sees (rpm / hood / turret / look-ahead); the gate's own motion checks keep the
+        // real teamVx / teamVy
+        final double vS = P.velCompScale, aS = P.accelCompScale;
+        final double svx = frame.vx * vS, svy = frame.vy * vS;
+        ax *= aS;
+        ay *= aS;
         accelX = ax;
         accelY = ay;
         targeter.speedTrimPct = P.speedTrimPct;
         long t0 = System.nanoTime();
-        targeter.solve(frame.x, frame.y, frame.headingDeg, frame.vx, frame.vy, frame.omegaDps,
+        targeter.solve(frame.x, frame.y, frame.headingDeg, svx, svy, frame.omegaDps,
                 ax, ay, shotIndex, spacing, result);
         ReducedTargeter.Result cmd = result;
         double L = P.mechLeadS;
         if (L > 0.0) {
-            targeter.solve(frame.x + frame.vx * L + 0.5 * ax * L * L, frame.y + frame.vy * L + 0.5 * ay * L * L,
-                    frame.headingDeg + frame.omegaDps * L, frame.vx + ax * L, frame.vy + ay * L, frame.omegaDps,
+            targeter.solve(frame.x + svx * L + 0.5 * ax * L * L, frame.y + svy * L + 0.5 * ay * L * L,
+                    frame.headingDeg + frame.omegaDps * L, svx + ax * L, svy + ay * L, frame.omegaDps,
                     ax, ay, shotIndex, spacing > 0.0 ? spacing + L : 0.0, lead);
             cmd = lead;
         }
+        // the stick as a leading indicator (turret only): the turret angle of a solve with the acceleration the stick asks for
+        ReducedTargeter.Result turRes = result;
+        intentAx = intentAy = 0.0;
+        if (P.driveIntentGain > 0.0 && intentValid) {
+            double tau = Math.max(1e-3, P.driveTauS);
+            double ahx = (intentVx * vS - svx) / tau, ahy = (intentVy * vS - svy) / tau;
+            double mag = Math.hypot(ahx, ahy);
+            double lim = (ahx * svx + ahy * svy) < 0.0 ? P.driveMaxDecelIps2 : P.driveMaxAccelIps2;
+            if (mag > lim && mag > 0.0) {
+                ahx *= lim / mag;
+                ahy *= lim / mag;
+            }
+            intentAx = P.driveIntentGain * ahx;
+            intentAy = P.driveIntentGain * ahy;
+            targeter.solve(frame.x, frame.y, frame.headingDeg, svx, svy, frame.omegaDps,
+                    intentAx, intentAy, shotIndex, spacing, intentR);
+            turRes = intentR;
+        }
+        sX = frame.x; sY = frame.y; sH = frame.headingDeg; sVx = svx; sVy = svy; sOm = frame.omegaDps;
+        sAx = ax; sAy = ay; sIdx = shotIndex; sSpacing = spacing;
+        haveSolve = true;
         long t1 = System.nanoTime();
         solveNanos = t1 - t0;
         // fire-gate look-ahead: the same solve at the pose propagated by each horizon (team frame)
         if (P.gateLookAhead) {
-            lookAhead(targeter, ahead, frame.x, frame.y, frame.headingDeg, frame.vx, frame.vy, frame.omegaDps,
+            lookAhead(targeter, ahead, frame.x, frame.y, frame.headingDeg, svx, svy, frame.omegaDps,
                     ax, ay, shotIndex, spacing, pAhead);
         } else {
             for (int j = 0; j < pAhead.length; j++) pAhead[j] = 0.0;
@@ -436,7 +544,7 @@ public final class ReducedShotController {
         rpmCmd = cmd.rpmCmd * s;
         rpmAtReleaseReal = cmd.rpmAtRelease * s;
         hoodDeg = Math.min(Math.max(cmd.hoodDeg + P.hoodTrimDeg, m.shotHood[0]), m.shotHood[m.nH - 1]);
-        turretTeamDeg = result.turretDeg - (P.useModelTurretLead ? 0.0 : result.turretLeadDeg);
+        turretTeamDeg = turRes.turretDeg - (P.useModelTurretLead ? 0.0 : turRes.turretLeadDeg);
         turretJavaDeg = ShotFrame.turretTeamToJava(turretTeamDeg) * P.turretScale + P.turretTrimDeg;
         pMake = result.pMake;
         feasible = result.feasible;
