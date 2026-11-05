@@ -13,7 +13,7 @@ import java.util.Properties;
  * The only shot command source (the old Shotplanner is deleted).
  * Edit live in FTC Dashboard; gamepad2 START in Test_tele saves to {@code /sdcard/FIRST/settings/shot_control.properties}.
  *
- * <p>Model: ONE file, {@code robot_model_red_audience_r10.json}, built into the app (TeamCode/src/main/assets/). Nothing on the
+ * <p>Model: ONE file, {@code robot_model_red_audience_r11.json}, built into the app (TeamCode/src/main/assets/). Nothing on the
  * hub overrides it (no /sdcard model, no field-tune export); to change the model replace that asset and rebuild.
  */
 @Config
@@ -55,6 +55,54 @@ public class ShotControlTuning {
     // toward red). LEFT TRIGGER held = the coarse step. BACK = trim back to 0.
     public static double goalStepCm = 1.0;
     public static double goalStepCoarseCm = 5.0;
+
+    // ===================== WHICH CELL (teleop) =====================
+    // The hive has two cells: the AUDIENCE-side cell (red 138.5 cm in X) and the FAR / scoring-side cell (220.5 cm in X); the hive centre line
+    // is X = 179.5 cm. goalSideAuto = true: no hive state is read - the shot aims at the cell on the SIDE OF THE HIVE the robot is on
+    // (X below the centre line = audience cell, above = far cell; goalSideHysteresisIn of hysteresis so it does not flicker on the line).
+    // false: the audience cell, or the far cell when goalForceFarCell. The goal trim above applies to whichever cell is aimed at.
+    public static boolean goalSideAuto = true;
+    public static boolean goalForceFarCell = false;
+    public static double goalSideHysteresisIn = 4.0;
+
+    /** What the cell switch is set to, for the displays. */
+    public static String goalSideMode() {
+        return goalSideAuto ? "AUTO (the cell on the robot's side of the hive)"
+                : goalForceFarCell ? "FIXED: FAR / scoring-side cell" : "FIXED: audience-side cell";
+    }
+
+    /** Cycles AUTO -> audience cell -> FAR cell -> AUTO (Shot Tuner: gamepad2 right stick button). Returns the new mode as text. */
+    public static String cycleGoalSide() {
+        if (goalSideAuto) {
+            goalSideAuto = false;
+            goalForceFarCell = false;
+        } else if (!goalForceFarCell) {
+            goalForceFarCell = true;
+        } else {
+            goalSideAuto = true;
+            goalForceFarCell = false;
+        }
+        return goalSideMode();
+    }
+
+    // ===================== SHOOTING WHILE MOVING: how much of the robot's motion is compensated (Dashboard) =====================
+    // Multiples of what the solve sees: 1.0 = full compensation (the model as built), 0 = none. velocityCompScale scales the chassis
+    // VELOCITY (the rpm / hood / turret correction for driving toward, away from and across the goal), accelCompScale the ACCELERATION
+    // (after the accelMaxIps2 clamp). Field report (r10): driving fast TOWARD the goal the wheel spun down too far, driving AWAY it spun up
+    // too far -> try velocityCompScale 0.7 .. 0.9 and look at the rpm / the landing. The fire gate keeps the real velocity.
+    public static double velocityCompScale = 1.0;
+    public static double accelCompScale = 1.0;
+
+    // ===================== DRIVE COMMAND -> SHOT (Test_tele) =====================
+    // YAW GOVERNOR: while the feed button is held the rotation stick is limited so the turret command rate stays inside the budget
+    // (the turret moves 300 deg/s at most). It only ever REDUCES the driver's rotation. Sim: 64 -> 78 % per-ball make rate on a mixed set
+    // of moves, turning scenarios 87 % vs 89 % standing still. yawGovernorBudgetDps = how much of the turret's rate it may use (210 = 70 %).
+    public static boolean yawGovernorEnabled = true;
+    public static double yawGovernorBudgetDps = 210.0;
+    // STICK LEAD for the turret: > 0 solves the turret angle a second time with the acceleration the translation sticks ask for
+    // ((stick velocity - velocity) / driveTauS) x this gain. OFF by default: in the sim it is worth +3 points when driving in straight
+    // lines and loses ~10 on jinking moves, so test it on the field before using it.
+    public static double driveIntentGain = 0.0;
 
     // Dashboard only (no buttons any more). rpmScale: real wheel rpm = model rpm x rpmScale (1.0 = the contact sim as built).
     // angleOffsetDeg: the real exit angle minus the model's [deg]. Both were tuned on the wrong goal position before 2026-11-02, so

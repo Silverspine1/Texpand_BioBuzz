@@ -3,11 +3,14 @@ package org.firstinspires.ftc.teamcode.CommandBase.NewCode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Drivebase.FieldDrive;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingUtility.RobotPower;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Pathing.PathingValues;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.intakeHardware_doubleBot;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.AxonEncoder;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ReducedShotController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.SetTurretAngle;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShotDriveGovernor;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShotHold;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.ServoSelect;
@@ -33,6 +36,9 @@ public class Test_tele extends OpModeEX {
     private int velTotal = 0;
 
     private final ShotHold shotHold = new ShotHold();
+    // drive command -> shot: the yaw governor (limits the rotation stick while the feed button is held) and the stick's command velocity
+    private final ShotDriveGovernor driveGovernor = new ShotDriveGovernor();
+    private final FieldDrive stickDrive = new FieldDrive();
     private final ElapsedTime packetTimer = new ElapsedTime();
     private String voltageVerdict = "-";
 
@@ -90,6 +96,9 @@ public class Test_tele extends OpModeEX {
         }
 
         if (vision.isCollecting()) {
+            shooterController.reduced.clearDriveIntent();
+            driveGovernor.state = "off (vision collect)";
+            driveGovernor.active = false;
             RobotPower visionPower = vision.getDrivePower();
             if (visionPower != null) driveBase.drivePowers(visionPower);
             else driveBase.drivePowers(0, 0, 0);
@@ -97,7 +106,26 @@ public class Test_tele extends OpModeEX {
             IntakeHardware.State = intakeHardware_doubleBot.intakeState.intaking;
         } else {
         // stick UP = away from the driver across the field, whatever the robot's heading
-        driveBase.driveFieldCentric(-gamepad1.right_stick_y, gamepad1.right_stick_x, (gamepad1.left_trigger - gamepad1.right_trigger),
+        // DRIVE COMMAND -> SHOT: while the feed button is held and the shot controller is aiming, the rotation stick is limited to what the
+        // turret can follow (ShotDriveGovernor); the translation sticks are never touched. The stick's command velocity also goes to the
+        // controller (ShotControlTuning.driveIntentGain, off by default).
+        driveGovernor.enabled = ShotControlTuning.yawGovernorEnabled;
+        driveGovernor.budgetDps = ShotControlTuning.yawGovernorBudgetDps;
+        driveGovernor.spFwd = PathingValues.SPEED_PER_POWER_FWD;
+        driveGovernor.spStr = PathingValues.SPEED_PER_POWER_STR;
+        driveGovernor.spTurn = PathingValues.SPEED_PER_POWER_TURN;
+        driveGovernor.ksFwd = PathingValues.KS_FWD;
+        driveGovernor.ksStr = PathingValues.KS_STR;
+        driveGovernor.ksTurn = PathingValues.KS_TURN;
+        driveGovernor.tauS = PathingValues.TAU_FWD;
+        stickDrive.solve(-gamepad1.right_stick_y, gamepad1.right_stick_x, odometry.Heading(), ShotControlTuning.blueAlliance,
+                ShotControlTuning.fieldDriveOffsetDeg);
+        boolean aiming = shooterController.targeting && shooterController.reducedActive && shooterController.reduced.hasModel();
+        double turnStick = driveGovernor.apply(shooterController.reduced, aiming && gamepad1.left_bumper,
+                gamepad1.left_trigger - gamepad1.right_trigger, stickDrive.vertical, stickDrive.strafe, odometry.Heading());
+        if (aiming) shooterController.reduced.setDriveIntent(driveGovernor.cmdVxMps, driveGovernor.cmdVyMps);
+        else shooterController.reduced.clearDriveIntent();
+        driveBase.driveFieldCentric(-gamepad1.right_stick_y, gamepad1.right_stick_x, turnStick,
                 odometry.Heading(), ShotControlTuning.blueAlliance, ShotControlTuning.fieldDriveOffsetDeg);
         IntakeHardware.Vertical = driveBase.vertical;
         // FEED = gamepad1 left bumper. With the reduced controller active the fire gate HOLDS it until FireGate says FIRE
@@ -280,6 +308,9 @@ public class Test_tele extends OpModeEX {
                 r.feasible ? r.pMake : 0.0, r.gateBestAhead, r.gateTLeft,
                 r.requestActive ? (r.gateDeadline ? " DEADLINE" : " (request)") : "", r.turCmdRate, r.rpmCmdRate);
         telemetry.addData("MOVEMENT PROTECTION", ShotControlTuning.gateProtect ? "ON (gamepad2 L-bumper = off)" : "OFF !!! (gamepad2 L-bumper = on)");
+        telemetry.addData("yaw governor", driveGovernor.statusLine());
+        telemetry.addData("motion comp", "velocity x%.2f  accel x%.2f   stick lead gain %.2f (turret accel from stick %.0f / %.0f in/s^2)",
+                ShotControlTuning.velocityCompScale, ShotControlTuning.accelCompScale, ShotControlTuning.driveIntentGain, r.intentAx, r.intentAy);
         telemetry.addData("feed hold", "%s  predicted turret err at release %.2f deg", ShotHold.TEXT[shotHold.state], r.gateEstRelDeg);
         telemetry.addData("burst: index / detected", "%d / %d", r.shotIndex, r.shotsDetected);
         telemetry.addData("solve / look-ahead / gate (us)", "%.1f / %.1f / %.1f  max %.1f", r.solveNanos / 1e3,

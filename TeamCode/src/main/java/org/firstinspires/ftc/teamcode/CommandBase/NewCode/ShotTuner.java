@@ -9,6 +9,7 @@ import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake.inta
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ReducedShotController;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShotCampaign;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShotCsv;
+import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShotFrame;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShotHold;
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter.ShooterController.TurretDebugMode;
 import org.firstinspires.ftc.teamcode.CommandBase.OpModeEX;
@@ -44,6 +45,8 @@ import java.util.Locale;
  *   A HIT   B SHORT   X LONG   LEFT BUMPER LEFT   RIGHT BUMPER RIGHT   (the row is written when you label it)
  *   D-pad up / down   rpmScale +/-     D-pad right / left   angleOffsetDeg +/-     LEFT TRIGGER + D-pad left / right   turret trim
  *   BACK   clear turret trim     Y   HOOD DEBUG on/off: D-pad up/down +-0.001, right = top, left = bottom
+ *   RIGHT STICK BUTTON       goal side: AUTO (the cell on the robot's side of the hive) -> audience cell -> FAR cell -> AUTO
+ *                            (ShotControlTuning.goalSideAuto / goalForceFarCell; also in INIT; START saves it)
  *   START                    save ShotControlTuning to /sdcard/FIRST/settings/shot_control.properties
  *   left stick button        reload the built-in model
  * </pre>
@@ -70,7 +73,24 @@ public class ShotTuner extends OpModeEX {
     private String logStatus = "log not opened";
     private boolean overrideNow;
     private boolean flyTest = false, flyTestPrevTargeting = false;
-    private boolean initAllianceLatch = false;
+    private boolean initAllianceLatch = false, initSideLatch = false;
+    private final ShotFrame sideFrame = new ShotFrame();
+
+    /** Which cell the next solve will aim at, from the CURRENT odometry pose (the solve has not run yet in INIT). */
+    private String goalSideLine(ReducedShotController r, boolean live) {
+        String cell;
+        if (live) {
+            cell = r.goalFarCell ? "FAR / scoring-side cell" : "audience-side cell";
+        } else if (ShotControlTuning.goalSideAuto) {
+            sideFrame.toTeam(false, odometry.X(), odometry.Y(), odometry.Heading(), 0, 0, 0, 0, 0);
+            double mid = 0.5 * ShotFrame.W_IN;
+            cell = sideFrame.x > mid + ShotControlTuning.goalSideHysteresisIn ? "FAR / scoring-side cell"
+                    : sideFrame.x < mid - ShotControlTuning.goalSideHysteresisIn ? "audience-side cell" : "on the hive line (keeps the last cell)";
+        } else {
+            cell = ShotControlTuning.goalForceFarCell ? "FAR / scoring-side cell" : "audience-side cell";
+        }
+        return "aiming at the " + cell + "   [" + ShotControlTuning.goalSideMode() + "; gamepad2 RIGHT STICK BUTTON cycles it]";
+    }
 
     /** INIT loop: keeps odometry running so the start pose is written and shown BEFORE you press PLAY (nothing else runs). */
     @Override
@@ -80,6 +100,9 @@ public class ShotTuner extends OpModeEX {
         telemetry.addLine("Check the pose below equals your start pose, the model is loaded, then press PLAY.");
         if (gamepad2.right_bumper && !initAllianceLatch) ShotControlTuning.blueAlliance = !ShotControlTuning.blueAlliance;
         initAllianceLatch = gamepad2.right_bumper;
+        if (gamepad2.right_stick_button && !initSideLatch) ShotControlTuning.cycleGoalSide();
+        initSideLatch = gamepad2.right_stick_button;
+        put("GOAL SIDE", goalSideLine(shooterController.reduced, false));
         put("ALLIANCE", (ShotControlTuning.blueAlliance ? "BLUE" : "RED") + "  (picks the close goal cell and the field-centric drive direction; gamepad2 RIGHT BUMPER switches it here in INIT)");
         put("pose", f("X %.1f  Y %.1f cm   heading %.1f deg   pinpoint %s%s", odometry.X(), odometry.Y(), odometry.Heading(),
                 odometry.pinpointStatus(), odometry.isPosePending() ? "   !!! start pose NOT written yet" : ""));
@@ -170,6 +193,9 @@ public class ShotTuner extends OpModeEX {
             shooterController.loadReducedModel();
             status = "reloaded: " + shooterController.reducedStatus;
         }
+        if (!lastGamepad2.right_stick_button && currentGamepad2.right_stick_button) {
+            status = "goal side: " + ShotControlTuning.cycleGoalSide() + "  (gamepad2 START saves)";
+        }
         if (!lastGamepad2.start && currentGamepad2.start) status = ShotControlTuning.saveAll();
 
         telemetryBlock(r, now, applicable);
@@ -214,7 +240,9 @@ public class ShotTuner extends OpModeEX {
         s.gateState = ReducedShotController.GATE_TEXT[r.gateState];
         s.override = hold.state == ShotHold.OVERRIDE;
         // rpm in the row is the REAL wheel rpm; the model rpm = rpm / rpmScale (field_tune needs that)
-        s.note = f("rpmScale=%.3f angleOffsetDeg=%.2f", ShotControlTuning.rpmScale, ShotControlTuning.angleOffsetDeg);
+        s.note = f("rpmScale=%.3f angleOffsetDeg=%.2f goalcell=%s%s velComp=%.2f accelComp=%.2f", ShotControlTuning.rpmScale,
+                ShotControlTuning.angleOffsetDeg, r.goalFarCell ? "far" : "audience", ShotControlTuning.goalSideAuto ? "(auto)" : "(fixed)",
+                ShotControlTuning.velocityCompScale, ShotControlTuning.accelCompScale);
         s.protect = ShotControlTuning.gateProtect;
         s.estRelDeg = r.gateEstRelDeg;
         s.hoodCmd = r.hoodDeg;
@@ -301,6 +329,7 @@ public class ShotTuner extends OpModeEX {
         put("shots / last label", shotCount + " / " + ShotCsv.LABEL[lastLabel]
                 + (pending != null ? "   (shot " + shotCount + " WAITING FOR A LABEL)" : "   (label: A hit, B short, X long, LB left, RB right)"));
         put("drive", "FIELD-CENTRIC");
+        put("GOAL SIDE", goalSideLine(r, true));
         if (flyTest) say(">>> FLYWHEEL TEST: gamepad2 right trigger held = manual power, targeting OFF. Read the rpm, then release. <<<");
         if (CAMPAIGN_ON) {
             put("CAMPAIGN", campaign.instruction());

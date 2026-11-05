@@ -63,7 +63,9 @@ public final class ShotDebug {
     /** The goal block: ALWAYS the last thing on the screen. */
     public static void goalBlock(ShooterController sc, BiConsumer<String, String> out) {
         final ReducedShotController r = sc.reduced;
-        out.accept("=== GOAL (global field cm; alliance " + (ShotControlTuning.blueAlliance ? "BLUE" : "RED") + ", close cell) ===", "");
+        out.accept("=== GOAL (global field cm; alliance " + (ShotControlTuning.blueAlliance ? "BLUE" : "RED") + ", "
+                + (r.goalFarCell ? "FAR / scoring-side cell" : "audience-side cell")
+                + (ShotControlTuning.goalSideAuto ? " - AUTO by side of the hive" : " - FIXED") + ") ===", "");
         if (!r.hasModel()) {
             out.accept("GOAL  X / Y", "no model loaded");
         } else {
