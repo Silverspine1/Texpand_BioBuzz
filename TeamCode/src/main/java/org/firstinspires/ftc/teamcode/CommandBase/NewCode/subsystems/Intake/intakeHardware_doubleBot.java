@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Intake;
 
 import androidx.annotation.NonNull;
 
+import com.qualcomm.robotcore.hardware.DigitalChannel;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.Drive.Drivebase.DriveBase;
@@ -16,6 +17,8 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
       MotorEx IMotorF = new MotorEx();
       MotorEx IMotorB = new MotorEx();
       ServoDegrees SBServo = new ServoDegrees();
+
+      private DigitalChannel touchSensor;
       public intakeHardware_doubleBot(OpModeEX opModeEX) {
           registerSubsystem(opModeEX, returnDefaultCommand());
       }
@@ -52,6 +55,8 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
           IMotorF.initMotor("IMotorF", getOpMode().hardwareMap);
           IMotorB.initMotor("IMotorB", getOpMode().hardwareMap);
           SBServo.initServo("SBServo", getOpMode().hardwareMap);
+          touchSensor = getOpMode().hardwareMap.get(DigitalChannel.class, "touchSensor");
+          touchSensor.setMode(DigitalChannel.Mode.INPUT);
 
           SBServo.setRange(355);
       }

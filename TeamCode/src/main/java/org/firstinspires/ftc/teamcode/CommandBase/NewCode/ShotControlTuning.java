@@ -87,7 +87,7 @@ public class ShotControlTuning {
 
     // Shooting while moving. The wheel and hood need time to reach a new command, so the rpm and hood are solved for where
     // the robot will be mechDelayS from now (its velocity and acceleration). The turret has its own lead (SetTurretAngle). 0 = off.
-    public static double mechDelayS = 0.080;
+    public static double mechDelayS = 0.00;
     // Use the robot's acceleration in the shot prediction (estimated from the filtered odometry velocity, clamped).
     public static boolean useAcceleration = true;
     public static double accelFilterS = 0.10;

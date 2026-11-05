@@ -44,7 +44,8 @@ public class ShooterTuning {
     // 1:1 goBILDA 6000 rpm motor is 28 ticks per rev. Check: full power with no load should read about 5800-6000 rpm.
     public static double flywheelTicksPerRev = 28;
     public static double flywheelKF = 0.00018;
-    public static double flywheelKP = 0.0003;
+    public static double flywheelKP = 0.001
+            ;
     public static double flywheelKI = 0.0008;
     public static double flywheelIntegralMax = 0.25;
     public static double flywheelIntegralZoneRpm = 300;
