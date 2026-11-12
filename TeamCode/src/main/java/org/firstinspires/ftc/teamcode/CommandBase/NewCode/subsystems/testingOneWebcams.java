@@ -40,6 +40,8 @@ public class testingOneWebcams extends LinearOpMode
                 .setStreamFormat(VisionPortal.StreamFormat.MJPEG)
                 .addProcessor(proc)
                 .build();
+        proc.setRobotPose(0,0,0);
+
 
         // Stream the processor's annotated frames, not the raw portal frames
         dashboard.startCameraStream(proc, 30);
@@ -60,6 +62,8 @@ public class testingOneWebcams extends LinearOpMode
             double[] centerHsv = proc.getCenterHsv();
             double[] targetHsv = proc.getTargetHsv();
             double[] xy = proc.getRobotXY();
+            proc.setRobotPose(0,0,0);
+            proc.getOptimalPath();
 
      /*       double cx = 0, cy = 0;
 

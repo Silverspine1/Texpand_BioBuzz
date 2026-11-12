@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface PipelineLogger {
     List<MatOfPoint> getContours();
+    void setRobotPose(double fieldX, double fieldY, double headingDeg);
 }
