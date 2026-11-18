@@ -1,3 +1,4 @@
+
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems;
 
 import android.graphics.Bitmap;
@@ -39,10 +40,11 @@ public class pipeline implements VisionProcessor,
     public static double V_LOW = 115, V_HIGH = 255;
 
     // CAMERA SETTINGS
-    public static double CAM_HEIGHT = 15;
-    public static double CAM_TILT_DOWN_DEG = 45;
-    public static double CAM_H_FOV_DEG = 70;
-    public static double CAM_FORWARD = 10;
+    public static double CAM_HEIGHT = 8.661417;
+    public static double CAM_TILT_DOWN_DEG = 50;
+    public static double CAM_H_FOV_DEG = 120;
+    public static double CAM_V_FOV_DEG = 88.5;
+    public static double CAM_FORWARD = 7.086614;
     public static double CAM_LEFT = 0;
     public static double CAM_YAW_DEG = 0;
     public static double TARGET_HEIGHT = 2.5;
@@ -65,16 +67,24 @@ public class pipeline implements VisionProcessor,
     // TIME-OPTIMAL PATH PLANNER SETTINGS (FTC Dashboard)
     public static int TARGET_BALL_COUNT = 3;
 
+    // Bézier trajectory fitting and profiling (all distances in inches).
+    public static int BEZIER_SAMPLES_PER_SEGMENT = 20;
+    public static double MAX_CURVE_DEVIATION_IN = 1.5;
+    public static double MAX_PATH_CURVATURE_PER_IN = 0.05;
+    public static double MAX_LATERAL_ACCEL_IN_PER_SEC2 = 69.75; // conservative mecanum limit
+    public static double PATH_SPEED_SCALE = 0.65;
+
+
     // Linear motion constraints, inches and seconds.
-    public static double MAX_FORWARD_VEL = 45.0;
-    public static double MAX_REVERSE_VEL = 38.0;
-    public static double MAX_STRAFE_VEL = 25.0;
-    public static double FORWARD_ACCEL = 55.0;
-    public static double REVERSE_ACCEL = 45.0;
-    public static double STRAFE_ACCEL = 35.0;
-    public static double FORWARD_DECEL = 65.0;
-    public static double REVERSE_DECEL = 55.0;
-    public static double STRAFE_DECEL = 45.0;
+    public static double MAX_FORWARD_VEL = 120.4724;
+    public static double MAX_REVERSE_VEL = 120.4724;
+    public static double MAX_STRAFE_VEL = 79.92126;
+    public static double FORWARD_ACCEL = 275.5906;
+    public static double REVERSE_ACCEL = 275.5906;
+    public static double STRAFE_ACCEL = 177.1654;
+    public static double FORWARD_DECEL = 300;
+    public static double REVERSE_DECEL = 300;
+    public static double STRAFE_DECEL = 200;
 
     // Angular motion constraints, degrees and seconds.
     public static double MAX_TURN_VEL_DEG = 180.0;
@@ -119,6 +129,19 @@ public class pipeline implements VisionProcessor,
     private volatile int[] lastPathIntakeSides = new int[0];
     // Snapshot of the last planned route for the combined camera/field stream.
     private volatile Point[] lastPlannedPath = new Point[0];
+    private volatile double lastBezierTrajectoryTimeSec = Double.NaN;
+
+    /** One sampled trajectory state. Coordinates and distances are inches. */
+    public static class TrajectoryPoint {
+        public final double xIn, yIn, distanceIn, curvaturePerIn;
+        public final double maxVelocityInPerSec, velocityInPerSec, timeSec;
+
+        public TrajectoryPoint(double x, double y, double distance, double curvature,
+                               double maxVelocity, double velocity, double time) {
+            xIn = x; yIn = y; distanceIn = distance; curvaturePerIn = curvature;
+            maxVelocityInPerSec = maxVelocity; velocityInPerSec = velocity; timeSec = time;
+        }
+    }
 
 
     // 0 = camera + overlay
@@ -777,10 +800,12 @@ public class pipeline implements VisionProcessor,
 
         int[] kmap = new int[w * h];
 
-        double f = (w / 2.0) /
-                Math.tan(
-                        Math.toRadians(CAM_H_FOV_DEG) / 2.0
-                );
+        // Separate focal lengths are required when horizontal and vertical
+        // fields of view are configured independently.
+        double fx = (w / 2.0) /
+                Math.tan(Math.toRadians(CAM_H_FOV_DEG) / 2.0);
+        double fy = (h / 2.0) /
+                Math.tan(Math.toRadians(CAM_V_FOV_DEG) / 2.0);
 
         double tilt = Math.toRadians(CAM_TILT_DOWN_DEG);
 
@@ -790,8 +815,8 @@ public class pipeline implements VisionProcessor,
 
                 int index = v * w + u;
 
-                double xc = (u - w / 2.0) / f;
-                double yc = (v - h / 2.0) / f;
+                double xc = (u - w / 2.0) / fx;
+                double yc = (v - h / 2.0) / fy;
 
                 double denom =
                         Math.sin(tilt) +
@@ -808,8 +833,9 @@ public class pipeline implements VisionProcessor,
                 double distance =
                         t * Math.sqrt(1 + xc * xc + yc * yc);
 
+                // Approximate the pixel radius using the mean focal length.
                 double radiusPx =
-                        f * BALL_RADIUS_IN / distance;
+                        ((fx + fy) * 0.5) * BALL_RADIUS_IN / distance;
 
                 kmap[index] = (int) Math.round(radiusPx);
             }
@@ -1214,13 +1240,14 @@ public class pipeline implements VisionProcessor,
             int h
     ) {
 
-        double f = (w / 2.0) /
-                Math.tan(
-                        Math.toRadians(CAM_H_FOV_DEG) / 2.0
-                );
+        // Use the independently configured horizontal and vertical FOVs.
+        double fx = (w / 2.0) /
+                Math.tan(Math.toRadians(CAM_H_FOV_DEG) / 2.0);
+        double fy = (h / 2.0) /
+                Math.tan(Math.toRadians(CAM_V_FOV_DEG) / 2.0);
 
-        double xc = (u - w / 2.0) / f;
-        double yc = (v - h / 2.0) / f;
+        double xc = (u - w / 2.0) / fx;
+        double yc = (v - h / 2.0) / fy;
 
         double tilt = Math.toRadians(CAM_TILT_DOWN_DEG);
 
@@ -1520,6 +1547,139 @@ public class pipeline implements VisionProcessor,
         return getOptimalPath(TARGET_BALL_COUNT);
     }
 
+    /** Returns the intake-aware, curvature-limited sampled Bézier path in inches. */
+    public Point[] getOptimalBezierPath(int targetCount) {
+        Point[] waypoints = getOptimalPath(targetCount);
+        if (waypoints == null || waypoints.length == 0 || !robotPoseSet) return new Point[0];
+        return buildSafeBezierPath(new Point(robotFieldX, robotFieldY), waypoints);
+    }
+
+    public Point[] getOptimalBezierPath() {
+        return getOptimalBezierPath(TARGET_BALL_COUNT);
+    }
+
+    /** Convert the selected polyline to a constrained Catmull-Rom/Bézier chain. */
+    private static Point[] buildSafeBezierPath(Point start, Point[] waypoints) {
+        List<Point> anchors = new ArrayList<>();
+        anchors.add(new Point(start.x, start.y));
+        if (waypoints != null) for (Point p : waypoints) if (p != null) anchors.add(new Point(p.x, p.y));
+        if (anchors.size() < 2) return anchors.toArray(new Point[0]);
+
+        int samples = Math.max(4, Math.min(100, BEZIER_SAMPLES_PER_SEGMENT));
+        double usableHalfWidth = Math.max(0.0, INTAKE_WIDTH_IN * 0.5
+                - BALL_RADIUS_IN - INTAKE_EDGE_MARGIN_IN);
+        double deviationLimit = Math.min(Math.max(0.0, MAX_CURVE_DEVIATION_IN),
+                usableHalfWidth > 0 ? usableHalfWidth * 0.35 : 0.0);
+        List<Point> output = new ArrayList<>();
+        output.add(new Point(anchors.get(0).x, anchors.get(0).y));
+
+        for (int i = 0; i < anchors.size() - 1; i++) {
+            Point p0 = anchors.get(Math.max(0, i - 1));
+            Point p1 = anchors.get(i);
+            Point p2 = anchors.get(i + 1);
+            Point p3 = anchors.get(Math.min(anchors.size() - 1, i + 2));
+            Point rawC1 = new Point(p1.x + (p2.x - p0.x) / 6.0,
+                    p1.y + (p2.y - p0.y) / 6.0);
+            Point rawC2 = new Point(p2.x - (p3.x - p1.x) / 6.0,
+                    p2.y - (p3.y - p1.y) / 6.0);
+            List<Point> accepted = null;
+            // Reduce tangent strength until deviation and curvature are acceptable.
+            for (int attempt = 0; attempt <= 8; attempt++) {
+                double scale = Math.pow(0.5, attempt);
+                Point c1 = new Point(p1.x + (rawC1.x - p1.x) * scale,
+                        p1.y + (rawC1.y - p1.y) * scale);
+                Point c2 = new Point(p2.x + (rawC2.x - p2.x) * scale,
+                        p2.y + (rawC2.y - p2.y) * scale);
+                List<Point> candidate = sampleBezier(p1, c1, c2, p2, samples);
+                if (isCurveAcceptable(candidate, p1, p2, deviationLimit,
+                        Math.max(0.0001, MAX_PATH_CURVATURE_PER_IN))) {
+                    accepted = candidate;
+                    break;
+                }
+            }
+            // Safe fallback: straight interpolation cannot cut outside this segment.
+            if (accepted == null) accepted = sampleBezier(p1, p1, p2, p2, samples);
+            for (Point q : accepted) output.add(q);
+        }
+        return output.toArray(new Point[0]);
+    }
+
+    private static List<Point> sampleBezier(Point p0, Point c1, Point c2, Point p3, int samples) {
+        List<Point> points = new ArrayList<>();
+        for (int j = 1; j <= samples; j++) {
+            double t = j / (double) samples, u = 1.0 - t;
+            double b0 = u*u*u, b1 = 3*u*u*t, b2 = 3*u*t*t, b3 = t*t*t;
+            points.add(new Point(b0*p0.x+b1*c1.x+b2*c2.x+b3*p3.x,
+                    b0*p0.y+b1*c1.y+b2*c2.y+b3*p3.y));
+        }
+        return points;
+    }
+
+    private static boolean isCurveAcceptable(List<Point> points, Point a, Point b,
+                                             double maxDeviation, double maxCurvature) {
+        for (Point p : points) {
+            if (distanceToSegment(p, a, b) > maxDeviation + 1e-6) return false;
+        }
+        for (int i = 1; i < points.size() - 1; i++) {
+            double curvature = curvature(points.get(i-1), points.get(i), points.get(i+1));
+            if (!Double.isFinite(curvature) || curvature > maxCurvature) return false;
+        }
+        return true;
+    }
+
+    private static double distanceToSegment(Point p, Point a, Point b) {
+        double dx=b.x-a.x, dy=b.y-a.y, len2=dx*dx+dy*dy;
+        if (len2 < 1e-12) return Math.hypot(p.x-a.x, p.y-a.y);
+        double t=((p.x-a.x)*dx+(p.y-a.y)*dy)/len2;
+        t=Math.max(0,Math.min(1,t));
+        return Math.hypot(p.x-(a.x+t*dx), p.y-(a.y+t*dy));
+    }
+
+    private static double curvature(Point a, Point b, Point c) {
+        double ab=Math.hypot(b.x-a.x,b.y-a.y), bc=Math.hypot(c.x-b.x,c.y-b.y), ac=Math.hypot(c.x-a.x,c.y-a.y);
+        double denom=ab*bc*ac;
+        if (denom < 1e-9) return 0.0;
+        double cross=Math.abs((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x));
+        return 2.0*cross/denom;
+    }
+
+    /** Build a time-parameterized profile over the constrained Bézier samples. */
+    public TrajectoryPoint[] getOptimalBezierTrajectory(int targetCount) {
+        Point[] path = getOptimalBezierPath(targetCount);
+        if (path == null || path.length < 2) { lastBezierTrajectoryTimeSec=Double.NaN; return new TrajectoryPoint[0]; }
+        int n=path.length;
+        double[] ds=new double[n], k=new double[n], limit=new double[n], v=new double[n], time=new double[n];
+        double maxV=Math.max(1e-6, Math.min(MAX_FORWARD_VEL, Math.min(MAX_REVERSE_VEL, MAX_STRAFE_VEL))*Math.max(0.05,Math.min(1.0,PATH_SPEED_SCALE)));
+        double accel=Math.max(1e-6,Math.min(FORWARD_ACCEL,Math.min(REVERSE_ACCEL,STRAFE_ACCEL)));
+        double decel=Math.max(1e-6,Math.min(FORWARD_DECEL,Math.min(REVERSE_DECEL,STRAFE_DECEL)));
+        double lateral=Math.max(1e-6,MAX_LATERAL_ACCEL_IN_PER_SEC2);
+        for(int i=1;i<n;i++) ds[i]=ds[i-1]+Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y);
+        for(int i=0;i<n;i++) {
+            if(i>0 && i<n-1) k[i]=curvature(path[i-1],path[i],path[i+1]);
+            double curveLimit=k[i]>1e-8?Math.sqrt(lateral/k[i]):maxV;
+            limit[i]=Math.min(maxV,curveLimit);
+            v[i]=limit[i];
+        }
+        v[0]=0; v[n-1]=0;
+        for(int i=1;i<n;i++) v[i]=Math.min(v[i],Math.sqrt(Math.max(0,v[i-1]*v[i-1]+2*accel*(ds[i]-ds[i-1]))));
+        for(int i=n-2;i>=0;i--) v[i]=Math.min(v[i],Math.sqrt(Math.max(0,v[i+1]*v[i+1]+2*decel*(ds[i+1]-ds[i]))));
+        for(int i=1;i<n;i++) {
+            double segment=ds[i]-ds[i-1], sum=v[i]+v[i-1];
+            double dt=sum>1e-8?2*segment/sum:0;
+            time[i]=time[i-1]+dt;
+        }
+        TrajectoryPoint[] result=new TrajectoryPoint[n];
+        for(int i=0;i<n;i++) result[i]=new TrajectoryPoint(path[i].x,path[i].y,ds[i],k[i],limit[i],v[i],time[i]);
+        lastBezierTrajectoryTimeSec=time[n-1];
+        return result;
+    }
+
+    public TrajectoryPoint[] getOptimalBezierTrajectory() {
+        return getOptimalBezierTrajectory(TARGET_BALL_COUNT);
+    }
+
+    public double getLastBezierTrajectoryTimeSec() { return lastBezierTrajectoryTimeSec; }
+
     /**
      * Draw the current robot pose, detected balls, planned route, and intake
      * choices in FTC Dashboard's Field view. Field X/Y must use inches with
@@ -1573,10 +1733,15 @@ public class pipeline implements VisionProcessor,
             overlay.setStroke("#00BFFF");
             overlay.setStrokeWidth(2);
 
+            Point[] displayCurve = robotPoseSet
+                    ? buildSafeBezierPath(new Point(robotFieldX, robotFieldY), path)
+                    : path;
+            for (int i = 1; i < displayCurve.length; i++) {
+                overlay.strokeLine(displayCurve[i - 1].x, displayCurve[i - 1].y,
+                        displayCurve[i].x, displayCurve[i].y);
+            }
             for (int i = 0; i < path.length; i++) {
                 Point waypoint = path[i];
-                overlay.strokeLine(fromX, fromY, waypoint.x, waypoint.y);
-
                 boolean rearIntake = intakeSides != null
                         && i < intakeSides.length && intakeSides[i] == 1;
                 String markerColor = rearIntake ? "#FF9900" : "#00DD66";
@@ -1796,3 +1961,4 @@ public class pipeline implements VisionProcessor,
         return detections.size();
     }
 }
+
