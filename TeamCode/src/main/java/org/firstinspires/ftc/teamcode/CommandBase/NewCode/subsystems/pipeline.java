@@ -1,4 +1,3 @@
-
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems;
 
 import android.graphics.Bitmap;
@@ -47,22 +46,47 @@ public class pipeline implements VisionProcessor,
     public static double CAM_FORWARD = 7.086614;
     public static double CAM_LEFT = 0;
     public static double CAM_YAW_DEG = 0;
-    public static double TARGET_HEIGHT = 2.5;
+    public static double TARGET_HEIGHT = 1.5;
 
     // BALL RADIUS IN INCHES
     public static double BALL_RADIUS_IN = 1.5;
 
     // DETECTION SETTINGS
     public static double FLOOR_PENALTY = 1.0;
-    public static double EXPLAINED_WEIGHT = 0.8;
+    // Pixels already claimed by an accepted ball must contribute no positive score to later candidates.
+    public static double EXPLAINED_WEIGHT = 1.0;
 
     public static double SCORE_MIN = 0.15;
     public static double NEW_MIN = 0.20;
 
-    public static double DUP_FRAC = 0.8;
+    // Fraction of the sum of two image-space ball radii used by adaptive NMS.
+    // Lower values preserve more closely overlapping real balls; higher values
+    // suppress more duplicate centres from one physical ball.
+    public static double DUP_FRAC = 0.55;
+    public static double DISTANCE_PEAK_MIN_RADIUS_FRACTION = 0.25;
     public static double MAX_RANGE_IN = 120;
 
     public static int MAX_BALLS = 10;
+
+    // Temporal validation for detections. A candidate must be seen in
+    // consecutive frames before it is exposed to the planner.
+    public static int TRACK_CONFIRM_FRAMES = 3;
+    public static int TRACK_MAX_MISSED_FRAMES = 2;
+    // Matching distance is based on the projected ball radii, so it scales
+    // with camera range rather than using a fixed pixel threshold.
+    public static double TRACK_MATCH_RADIUS_FACTOR = 0.85;
+    public static double TRACK_SMOOTHING = 0.35;
+
+    // Same-frame duplicate suppression, applied before temporal tracking.
+    // Candidates closer than this fraction of the larger projected radius
+    // are treated as competing centres for the same physical ball. Using the
+    // larger radius prevents a small false peak from escaping suppression.
+    // Keep below 2.0 so two touching balls can still be represented separately.
+    public static double DUPLICATE_CANDIDATE_DISTANCE_FACTOR = 1.65;
+
+    // Changes only the green camera-overlay circle, not triangulation,
+    // Detection.radiusPx, robot coordinates, or planner geometry.
+    public static double DETECTION_CIRCLE_DISPLAY_SCALE = 1.35;
 
     // TIME-OPTIMAL PATH PLANNER SETTINGS (FTC Dashboard)
     public static int TARGET_BALL_COUNT = 3;
@@ -204,6 +228,40 @@ public class pipeline implements VisionProcessor,
         }
     }
 
+    // Local maxima from the binary-mask distance transform.
+    // Separate maxima are useful seeds for two touching/overlapping balls.
+    private static class DistanceSeed {
+        int u, v;
+        double radiusPx;
+
+        DistanceSeed(int u, int v, double radiusPx) {
+            this.u = u;
+            this.v = v;
+            this.radiusPx = radiusPx;
+        }
+    }
+
+    // Temporal track for one physical ball. The centre is smoothed across
+    // frames so small distance-transform peak changes do not move the target.
+    private static class DetectionTrack {
+        double u, v, radiusPx, score, coverage, xr, yr;
+        int consecutiveHits;
+        int missedFrames;
+
+        DetectionTrack(Detection d) {
+            u = d.u;
+            v = d.v;
+            radiusPx = d.radiusPx;
+            score = d.score;
+            coverage = d.coverage;
+            xr = d.xr;
+            yr = d.yr;
+            consecutiveHits = 1;
+        }
+    }
+
+    private final List<DetectionTrack> detectionTracks = new ArrayList<>();
+
     // DETECTION CLASS
     public static class Detection {
 
@@ -294,7 +352,7 @@ public class pipeline implements VisionProcessor,
         mask.get(0, 0, maskData);
 
         List<Detection> foundBalls =
-                detectBalls(maskData, w, h);
+                detectBalls(mask, maskData, w, h);
 
         detections = Collections.unmodifiableList(
                 new ArrayList<>(foundBalls)
@@ -396,7 +454,12 @@ public class pipeline implements VisionProcessor,
             Imgproc.circle(
                     frame,
                     p,
-                    (int) Math.round(d.radiusPx),
+                    Math.max(1, (int) Math.round(
+                            d.radiusPx * Math.max(
+                                    0.10,
+                                    Math.min(3.0, DETECTION_CIRCLE_DISPLAY_SCALE)
+                            )
+                    )),
                     green,
                     2
             );
@@ -921,8 +984,95 @@ public class pipeline implements VisionProcessor,
         return areas;
     }
 
-    // BUILD CANDIDATES
-    private List<Candidate> buildCandidates(
+    // DISTANCE-TRANSFORM PEAKS
+    // Each strong local maximum is a possible centre of one physical ball.
+    // For two touching balls, the two lobes can produce two separate peaks
+    // even though the threshold mask is one connected white region.
+    private List<DistanceSeed> buildDistanceSeeds(
+            Mat binaryMask,
+            int[] kmap,
+            int w,
+            int h
+    ) {
+        List<DistanceSeed> seeds = new ArrayList<>();
+        Mat distanceMap = new Mat();
+
+        try {
+            Imgproc.distanceTransform(
+                    binaryMask,
+                    distanceMap,
+                    Imgproc.DIST_L2,
+                    5
+            );
+
+            float[] distances = new float[w * h];
+            distanceMap.get(0, 0, distances);
+
+            for (int v = 1; v < h - 1; v++) {
+                for (int u = 1; u < w - 1; u++) {
+                    int index = v * w + u;
+                    double radius = distances[index];
+
+                    double expectedRadius = kmap[index];
+                    double minPeakRadius = Math.max(
+                            2.0,
+                            expectedRadius * DISTANCE_PEAK_MIN_RADIUS_FRACTION
+                    );
+                    if (radius < minPeakRadius) continue;
+
+                    // Keep only 8-neighbour local maxima. A small tolerance
+                    // avoids losing peaks to floating-point noise.
+                    boolean localMaximum = true;
+                    for (int dy = -1; dy <= 1 && localMaximum; dy++) {
+                        for (int dx = -1; dx <= 1; dx++) {
+                            if (dx == 0 && dy == 0) continue;
+                            float neighbour = distances[(v + dy) * w + (u + dx)];
+                            if (neighbour > radius + 0.05) {
+                                localMaximum = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (!localMaximum) continue;
+
+                    // Collapse flat/nearby maxima belonging to the same lobe.
+                    // This is adaptive in image pixels, so it scales with range.
+                    int duplicateIndex = -1;
+                    for (int i = 0; i < seeds.size(); i++) {
+                        DistanceSeed old = seeds.get(i);
+                        double separation = Math.hypot(
+                                old.u - u,
+                                old.v - v
+                        );
+                        double suppressionRadius = DUP_FRAC *
+                                (old.radiusPx + radius);
+                        if (separation < suppressionRadius) {
+                            duplicateIndex = i;
+                            break;
+                        }
+                    }
+
+                    if (duplicateIndex < 0) {
+                        seeds.add(new DistanceSeed(u, v, radius));
+                    } else if (radius > seeds.get(duplicateIndex).radiusPx) {
+                        seeds.set(
+                                duplicateIndex,
+                                new DistanceSeed(u, v, radius)
+                        );
+                    }
+                }
+            }
+        } finally {
+            distanceMap.release();
+        }
+
+        return seeds;
+    }
+
+    // ADD ONE CIRCLE CANDIDATE AT A DISTANCE-TRANSFORM SEED
+    private void addSeedCandidate(
+            List<Candidate> candidates,
+            DistanceSeed seed,
             byte[] maskData,
             int[] kmap,
             int[] areaLookup,
@@ -930,53 +1080,83 @@ public class pipeline implements VisionProcessor,
             int w,
             int h
     ) {
-
-        List<Candidate> candidates = new ArrayList<>();
-
+        int u = seed.u;
+        int v = seed.v;
+        int index = v * w + u;
+        int k = kmap[index];
         int maxK = Math.min(w, h) / 2;
 
+        if (k < 2 || k > maxK) return;
+        if (u - k < 0 || u + k >= w) return;
+        if (v - k < 0 || v + k >= h) return;
+        if ((maskData[index] & 0xFF) == 0) return;
+
+        Candidate c = new Candidate(u, v, k);
+        c.area = areaLookup[k];
+        c.M = disc(prefM, u, v, k, w, h);
+        c.score = (
+                c.M - FLOOR_PENALTY * (c.area - c.M)
+        ) / (double) c.area;
+
+        double[] xy = pixelToRobot(u + 0.5, v + 0.5, w, h);
+        if (xy == null) return;
+
+        c.gx = xy[0];
+        c.gy = xy[1];
+        candidates.add(c);
+    }
+
+    // BUILD CANDIDATES
+    // Prefer distance-transform peaks. If the mask is too fragmented or no
+    // useful peaks are found, fall back to the original pixel scan.
+    private List<Candidate> buildCandidates(
+            byte[] maskData,
+            int[] kmap,
+            int[] areaLookup,
+            int[][] prefM,
+            List<DistanceSeed> seeds,
+            int w,
+            int h
+    ) {
+        List<Candidate> candidates = new ArrayList<>();
+
+        if (seeds != null && !seeds.isEmpty()) {
+            for (DistanceSeed seed : seeds) {
+                addSeedCandidate(
+                        candidates, seed, maskData, kmap,
+                        areaLookup, prefM, w, h
+                );
+            }
+            if (!candidates.isEmpty()) return candidates;
+        }
+
+        // Original candidate scan retained as a safe fallback.
+        int maxK = Math.min(w, h) / 2;
         for (int v = 1; v < h - 1; v++) {
-
             for (int u = 1; u < w - 1; u++) {
-
                 int i = v * w + u;
-
                 if ((maskData[i] & 0xFF) == 0) continue;
-
                 if ((maskData[i - 1] & 0xFF) == 0) continue;
                 if ((maskData[i + 1] & 0xFF) == 0) continue;
                 if ((maskData[i - w] & 0xFF) == 0) continue;
                 if ((maskData[i + w] & 0xFF) == 0) continue;
 
                 int k = kmap[i];
-
                 if (k < 2 || k > maxK) continue;
-
                 if (u - k < 0 || u + k >= w) continue;
                 if (v - k < 0 || v + k >= h) continue;
 
                 Candidate c = new Candidate(u, v, k);
-
                 c.area = areaLookup[k];
-
-                c.M = disc(
-                        prefM, u, v, k, w, h
-                );
-
+                c.M = disc(prefM, u, v, k, w, h);
                 c.score = (
-                        c.M -
-                                FLOOR_PENALTY * (c.area - c.M)
+                        c.M - FLOOR_PENALTY * (c.area - c.M)
                 ) / (double) c.area;
 
-                double[] xy = pixelToRobot(
-                        u + 0.5, v + 0.5, w, h
-                );
-
+                double[] xy = pixelToRobot(u + 0.5, v + 0.5, w, h);
                 if (xy == null) continue;
-
                 c.gx = xy[0];
                 c.gy = xy[1];
-
                 candidates.add(c);
             }
         }
@@ -1027,26 +1207,24 @@ public class pipeline implements VisionProcessor,
         return new Point(sumU / sumW, sumV / sumW);
     }
 
-    // DUPLICATE CHECK
+    // ADAPTIVE IMAGE-SPACE DUPLICATE CHECK
+    // Compare centre separation against the sum of projected pixel radii.
+    // Unlike a fixed inch threshold, this adapts to camera distance and
+    // preserves two genuinely close/touching balls when their centres differ.
     private boolean isDuplicate(
             List<Detection> results,
-            double x,
-            double y
+            double u,
+            double v,
+            double radiusPx
     ) {
-
-        double minDistance =
-                DUP_FRAC * 2.0 * BALL_RADIUS_IN;
-
         for (Detection d : results) {
-
-            double dx = d.xr - x;
-            double dy = d.yr - y;
-
-            if (Math.hypot(dx, dy) < minDistance) {
+            double separation = Math.hypot(d.u - u, d.v - v);
+            double suppressionRadius = DUP_FRAC *
+                    (d.radiusPx + radiusPx);
+            if (separation < suppressionRadius) {
                 return true;
             }
         }
-
         return false;
     }
 
@@ -1083,7 +1261,8 @@ public class pipeline implements VisionProcessor,
     }
 
     // GREEDY MULTI-BALL DETECTOR
-    private List<Detection> detectBalls(
+    private List<Detection> detectBallsRaw(
+            Mat binaryMask,
             byte[] maskData,
             int w,
             int h
@@ -1098,11 +1277,16 @@ public class pipeline implements VisionProcessor,
         int[] areaLookup =
                 buildAreaLookup(Math.min(w, h) / 2);
 
+        List<DistanceSeed> distanceSeeds = buildDistanceSeeds(
+                binaryMask, kmap, w, h
+        );
+
         List<Candidate> candidates = buildCandidates(
                 maskData,
                 kmap,
                 areaLookup,
                 prefM,
+                distanceSeeds,
                 w,
                 h
         );
@@ -1146,7 +1330,12 @@ public class pipeline implements VisionProcessor,
             double yr = xy[1];
 
             // Remove duplicate detections
-            if (isDuplicate(results, xr, yr)) {
+            if (isDuplicate(
+                    results,
+                    refined.x,
+                    refined.y,
+                    best.k
+            )) {
                 best.alive = false;
                 continue;
             }
@@ -1200,14 +1389,13 @@ public class pipeline implements VisionProcessor,
 
                 if (!c.alive) continue;
 
-                double dx = c.gx - xr;
-                double dy = c.gy - yr;
+                double pixelDx = c.u - refined.x;
+                double pixelDy = c.v - refined.y;
+                double pixelDistance = Math.hypot(pixelDx, pixelDy);
+                double adaptiveSuppressionRadius = DUP_FRAC *
+                        (best.k + c.k);
 
-                double distance = Math.hypot(dx, dy);
-
-                if (distance <
-                        DUP_FRAC * 2.0 * BALL_RADIUS_IN) {
-
+                if (pixelDistance < adaptiveSuppressionRadius) {
                     c.alive = false;
                     continue;
                 }
@@ -1230,6 +1418,186 @@ public class pipeline implements VisionProcessor,
         }
 
         return results;
+    }
+
+    /**
+     * Removes competing centres produced inside one physical ball in the
+     * same frame. Candidates are considered strongest-first, so a weaker
+     * nearby peak cannot create a second temporal track.
+     *
+     * The threshold uses the larger displayed image radius, including the
+     * detection-circle display scale. This is important because the raw
+     * projected radius is smaller than the visible ball in the current
+     * camera image. The default threshold is 1.65 displayed radii.
+     */
+    private List<Detection> suppressSameFrameDuplicates(
+            List<Detection> detections
+    ) {
+        List<Detection> ranked = new ArrayList<>(detections);
+        Collections.sort(ranked, (a, b) -> {
+            int scoreOrder = Double.compare(b.score, a.score);
+            if (scoreOrder != 0) return scoreOrder;
+            return Double.compare(b.coverage, a.coverage);
+        });
+
+        List<Detection> kept = new ArrayList<>();
+        double factor = Math.max(
+                0.10,
+                Math.min(1.75, DUPLICATE_CANDIDATE_DISTANCE_FACTOR)
+        );
+
+        for (Detection candidate : ranked) {
+            boolean duplicate = false;
+
+            for (Detection accepted : kept) {
+                double centreDistance = Math.hypot(
+                        candidate.u - accepted.u,
+                        candidate.v - accepted.v
+                );
+
+                // Use the larger radius and the same scale used by the
+                // visible detection circle. The raw projected radius is
+                // currently smaller than the physical ball in the camera
+                // image, so filtering with the unscaled value was too weak.
+                double displayScale = Math.max(
+                        0.10,
+                        Math.min(3.0, DETECTION_CIRCLE_DISPLAY_SCALE)
+                );
+
+                double referenceRadius = Math.max(
+                        Math.max(1.0, candidate.radiusPx),
+                        Math.max(1.0, accepted.radiusPx)
+                ) * displayScale;
+
+                double suppressionDistance = Math.max(
+                        4.0,
+                        factor * referenceRadius
+                );
+
+                if (centreDistance < suppressionDistance) {
+                    duplicate = true;
+                    break;
+                }
+            }
+
+            if (!duplicate) {
+                kept.add(candidate);
+            }
+        }
+
+        return kept;
+    }
+
+    /**
+     * Stabilises de-duplicated detections over time. Each candidate can
+     * update at most one track per frame. Unconfirmed tracks are hidden
+     * from the planner, preventing transient peaks becoming extra balls.
+     */
+    private List<Detection> detectBalls(
+            Mat binaryMask,
+            byte[] maskData,
+            int w,
+            int h
+    ) {
+        List<Detection> raw = suppressSameFrameDuplicates(
+                detectBallsRaw(binaryMask, maskData, w, h)
+        );
+        boolean[] trackUpdated = new boolean[detectionTracks.size()];
+
+        // Match the closest valid detection/track pairs first.
+        class Match {
+            int detectionIndex;
+            int trackIndex;
+            double distance;
+            Match(int d, int t, double distance) {
+                detectionIndex = d;
+                trackIndex = t;
+                this.distance = distance;
+            }
+        }
+
+        List<Match> matches = new ArrayList<>();
+        for (int di = 0; di < raw.size(); di++) {
+            Detection d = raw.get(di);
+            for (int ti = 0; ti < detectionTracks.size(); ti++) {
+                DetectionTrack t = detectionTracks.get(ti);
+                double distance = Math.hypot(d.u - t.u, d.v - t.v);
+                double allowed = Math.max(4.0,
+                        TRACK_MATCH_RADIUS_FACTOR * (d.radiusPx + t.radiusPx));
+                if (distance <= allowed) {
+                    matches.add(new Match(di, ti, distance));
+                }
+            }
+        }
+        Collections.sort(matches, (a, b) ->
+                Double.compare(a.distance, b.distance));
+
+        boolean[] detectionUsed = new boolean[raw.size()];
+        for (Match match : matches) {
+            if (detectionUsed[match.detectionIndex]
+                    || trackUpdated[match.trackIndex]) {
+                continue;
+            }
+
+            Detection d = raw.get(match.detectionIndex);
+            DetectionTrack t = detectionTracks.get(match.trackIndex);
+            double alpha = Math.max(0.05, Math.min(1.0, TRACK_SMOOTHING));
+
+            t.u += alpha * (d.u - t.u);
+            t.v += alpha * (d.v - t.v);
+            t.radiusPx += alpha * (d.radiusPx - t.radiusPx);
+            t.score = d.score;
+            t.coverage = d.coverage;
+
+            // Recalculate robot coordinates from the smoothed image centre.
+            double[] xy = pixelToRobot(t.u, t.v, w, h);
+            if (xy != null) {
+                t.xr = xy[0];
+                t.yr = xy[1];
+            }
+
+            t.consecutiveHits++;
+            t.missedFrames = 0;
+            detectionUsed[match.detectionIndex] = true;
+            trackUpdated[match.trackIndex] = true;
+        }
+
+        // Unmatched detections start provisional tracks. They are not
+        // published until TRACK_CONFIRM_FRAMES have been observed.
+        for (int di = 0; di < raw.size(); di++) {
+            if (detectionUsed[di]) continue;
+            if (detectionTracks.size() >= Math.max(MAX_BALLS * 3, MAX_BALLS)) {
+                break;
+            }
+            detectionTracks.add(new DetectionTrack(raw.get(di)));
+            boolean[] expanded = new boolean[detectionTracks.size()];
+            System.arraycopy(trackUpdated, 0, expanded, 0, trackUpdated.length);
+            trackUpdated = expanded;
+            trackUpdated[trackUpdated.length - 1] = true;
+        }
+
+        // Age tracks that were not observed this frame; discard stale tracks.
+        for (int i = detectionTracks.size() - 1; i >= 0; i--) {
+            DetectionTrack t = detectionTracks.get(i);
+            if (i >= trackUpdated.length || !trackUpdated[i]) {
+                t.missedFrames++;
+                t.consecutiveHits = 0;
+            }
+            if (t.missedFrames > Math.max(0, TRACK_MAX_MISSED_FRAMES)) {
+                detectionTracks.remove(i);
+            }
+        }
+
+        List<Detection> stable = new ArrayList<>();
+        int confirmFrames = Math.max(1, TRACK_CONFIRM_FRAMES);
+        for (DetectionTrack t : detectionTracks) {
+            if (t.consecutiveHits >= confirmFrames && t.missedFrames == 0) {
+                stable.add(new Detection(
+                        t.u, t.v, t.radiusPx, t.score, t.coverage, t.xr, t.yr
+                ));
+            }
+        }
+        return stable;
     }
 
     // PIXEL TO ROBOT COORDINATES
@@ -1961,4 +2329,3 @@ public class pipeline implements VisionProcessor,
         return detections.size();
     }
 }
-

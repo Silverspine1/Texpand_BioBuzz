@@ -56,7 +56,7 @@ public class testingOneWebcams extends LinearOpMode
             Point c = proc.getCenter();
 
             if (TimeSinceStart.milliseconds()<1000){
-                setManualExposure(5,100);
+                setManualExposure(6,100);
             }
 
             double[] centerHsv = proc.getCenterHsv();
