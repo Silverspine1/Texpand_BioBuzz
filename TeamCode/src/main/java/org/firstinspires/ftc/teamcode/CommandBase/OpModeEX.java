@@ -118,6 +118,7 @@ public abstract class OpModeEX extends OpMode {
         loopTime = timer.milliseconds() - lastTime;
         profiler.update(telemetry);
         profiler.endPhase(LoopProfiler.TELEMETRY);
+        IntakeHardware.shooterRPM = shooterController.RPM;
 
         // ── Record totalLoop ──
         profiler.endTotalLoop();

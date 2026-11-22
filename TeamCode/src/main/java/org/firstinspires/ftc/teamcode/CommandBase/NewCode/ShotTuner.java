@@ -150,7 +150,7 @@ public class ShotTuner extends OpModeEX {
 
         // ---- driver ----
         // stick UP = away from the driver across the field (field-centric, always on)
-        driveBase.driveFieldCentric(-gamepad1.right_stick_y, gamepad1.right_stick_x, (gamepad1.left_trigger - gamepad1.right_trigger),
+        driveBase.driveFieldCentric(-gamepad1.right_stick_y, gamepad1.right_stick_x, (gamepad1.left_trigger/2 - gamepad1.right_trigger/2),
                 odometry.Heading(), ShotControlTuning.blueAlliance, ShotControlTuning.fieldDriveOffsetDeg);
         IntakeHardware.Vertical = driveBase.vertical;
         if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up && !flyTest) shooterController.targeting = !shooterController.targeting;

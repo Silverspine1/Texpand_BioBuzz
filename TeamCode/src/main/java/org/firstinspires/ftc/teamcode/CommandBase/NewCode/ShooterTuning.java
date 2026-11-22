@@ -42,11 +42,10 @@ public class ShooterTuning {
 
     // Flywheel: power = kF * targetRPM + kP * error + integral(kI * error)
     // 1:1 goBILDA 6000 rpm motor is 28 ticks per rev. Check: full power with no load should read about 5800-6000 rpm.
-    public static double flywheelTicksPerRev = 28;
-    public static double flywheelKF = 0.00018;
-    public static double flywheelKP = 0.001
-            ;
-    public static double flywheelKI = 0.0008;
+    public static double flywheelTicksPerRev = 16.4;
+    public static double flywheelKF = 0.00014;
+    public static double flywheelKP = 0.001;
+    public static double flywheelKI = 0.0006;
     public static double flywheelIntegralMax = 0.25;
     public static double flywheelIntegralZoneRpm = 300;
     public static double flywheelMaxPower = 1.0;
@@ -54,8 +53,8 @@ public class ShooterTuning {
     public static double flywheelReadyPercent = 3.0;
 
     // Start pose used by Test_tele / Shot Tuner at init and by their set-pose button (cm, degrees)
-    public static double startXcm = 28;
-    public static double startYcm = 350;
+    public static double startXcm = 32;
+    public static double startYcm = 336;
     public static double startHeadingDeg = 0;
 
     private static String loadStatus = "shooter: not loaded yet";

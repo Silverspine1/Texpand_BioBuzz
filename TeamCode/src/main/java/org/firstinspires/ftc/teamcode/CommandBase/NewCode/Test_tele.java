@@ -149,12 +149,7 @@ public class Test_tele extends OpModeEX {
 
 
         }
-        }        if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up) {
-            shooterController.targeting = !shooterController.targeting;
-            if (shooterController.targeting) {
-                pingPong = false;
-                shooterController.turretDebugMode = TurretDebugMode.OFF;
-            }
+
         }
 
         AxonEncoder encoder = shooterController.encoder;
@@ -187,6 +182,8 @@ public class Test_tele extends OpModeEX {
         if (!lastGamepad2.left_stick_button && currentGamepad2.left_stick_button) detailed = !detailed;
         shooterController.manualFlywheelPower = gamepad2.right_trigger;
         reducedShotControls();
+        telemetry.addData("intake ball count",IntakeHardware.Count );
+
 
         // ---- what is shown: the few shooting lines, the detailed screens only on request, the GOAL block ALWAYS last ----
         ShotDebug.compact(odometry, shooterController, ShotHold.TEXT[shotHold.state],
@@ -260,12 +257,12 @@ public class Test_tele extends OpModeEX {
      * (default ON; always starts ON), B (hold) = feed override. gamepad1 LEFT BUMPER feeds: held until the gate says FIRE.
      */
     private void reducedShotControls() {
-        String trim = ShotControlTuning.trimButtons(currentGamepad2, lastGamepad2);
-        if (trim != null) reducedSaveStatus = trim + " (START saves)";
-        if (!lastGamepad2.x && currentGamepad2.x) shooterController.loadReducedModel();
-        if (!lastGamepad2.a && currentGamepad2.a) shooterController.requestReducedShot();
-        if (!lastGamepad2.left_bumper && currentGamepad2.left_bumper) ShotControlTuning.gateProtect = !ShotControlTuning.gateProtect;
-        if (!lastGamepad2.start && currentGamepad2.start) reducedSaveStatus = saveEverything();
+//        String trim = ShotControlTuning.trimButtons(currentGamepad2, lastGamepad2);
+//        if (trim != null) reducedSaveStatus = trim + " (START saves)";
+//        if (!lastGamepad2.x && currentGamepad2.x) shooterController.loadReducedModel();
+//        if (!lastGamepad2.a && currentGamepad2.a) shooterController.requestReducedShot();
+//        if (!lastGamepad2.left_bumper && currentGamepad2.left_bumper) ShotControlTuning.gateProtect = !ShotControlTuning.gateProtect;
+//        if (!lastGamepad2.start && currentGamepad2.start) reducedSaveStatus = saveEverything();
     }
 
     private String reducedSaveStatus = "";
@@ -343,17 +340,12 @@ public class Test_tele extends OpModeEX {
             shooterController.encoder.resetTurretAngle();
         }
 
-        if (!lastGamepad1.dpad_left && currentGamepad1.dpad_left) {
-            pingPong = false;
-            startMove(TurretTuning.testAngle);
+        if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up) {
+            IntakeHardware.Flower = true;
         }
-        if (!lastGamepad1.dpad_right && currentGamepad1.dpad_right) {
-            pingPong = false;
-            startMove(-TurretTuning.testAngle);
-        }
+
         if (!lastGamepad1.dpad_down && currentGamepad1.dpad_down) {
-            pingPong = false;
-            startMove(0);
+            IntakeHardware.Flower = false;
         }
 
         if (!lastGamepad1.a && currentGamepad1.a) {

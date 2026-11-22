@@ -90,8 +90,8 @@ public class ShotControlTuning {
     // VELOCITY (the rpm / hood / turret correction for driving toward, away from and across the goal), accelCompScale the ACCELERATION
     // (after the accelMaxIps2 clamp). Field report (r10): driving fast TOWARD the goal the wheel spun down too far, driving AWAY it spun up
     // too far -> try velocityCompScale 0.7 .. 0.9 and look at the rpm / the landing. The fire gate keeps the real velocity.
-    public static double velocityCompScale = 1.0;
-    public static double accelCompScale = 1.0;
+    public static double velocityCompScale = 0.9;
+    public static double accelCompScale = 0.9;
 
     // ===================== DRIVE COMMAND -> SHOT (Test_tele) =====================
     // YAW GOVERNOR: while the feed button is held the rotation stick is limited so the turret command rate stays inside the budget

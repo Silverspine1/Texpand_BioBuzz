@@ -15,7 +15,7 @@ public class AxonEncoder implements SetTurretAngle.Sensor {
     double difference = 0;
     double previousAngle = 0;
     double totalPosition = 0;
-    double gearRatio = 1.918032;
+    double gearRatio = 2.2093;
     double degreesPerSecond = 0;
     double velocityFilterGain = 0.3;
     ElapsedTime veloTimer = new ElapsedTime();
