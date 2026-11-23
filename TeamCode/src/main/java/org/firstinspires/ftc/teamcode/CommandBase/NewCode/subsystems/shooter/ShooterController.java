@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter;
 
+import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
@@ -45,6 +46,9 @@ public class ShooterController extends SubSystem {
     private double lastTurretCmd = Double.NaN;
 
     public MotorEx shooterMotor = new MotorEx();
+    /** Second flywheel motor: same power as shooterMotor, no encoder use (the speed is read from shooterMotor's encoder). */
+    public MotorEx shooterMotor2 = new MotorEx();
+    private boolean appliedBrake = true;
     double targetRPM = 0;
     public double RPM;
     public double flywheelPower = 0;
@@ -101,6 +105,8 @@ public class ShooterController extends SubSystem {
         ShotControlTuning.hoodDebug = false;
 
         shooterMotor.initMotor("shooterMotor", getOpMode().hardwareMap);
+        shooterMotor2.initMotor("shooterMotor2", getOpMode().hardwareMap);
+        applyBrake();
 
         turretServo1 = getOpMode().hardwareMap.get(Servo.class, "turretServo1");
         turretServo2 = getOpMode().hardwareMap.get(Servo.class, "turretServo2");
@@ -212,6 +218,15 @@ public class ShooterController extends SubSystem {
     private void applyMotorDirection() {
         appliedReversed = ShotControlTuning.shooterMotorReversed;
         shooterMotor.setDirection(appliedReversed ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
+        boolean rev2 = appliedReversed != ShotControlTuning.shooterMotor2Opposite;
+        shooterMotor2.setDirection(rev2 ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
+    }
+
+    /** One motor brakes at zero power, the other floats: gentle extra deceleration, never a reverse power. */
+    private void applyBrake() {
+        appliedBrake = ShotControlTuning.shooterBrakeOnZero;
+        shooterMotor.setZeroPowerBehavior(appliedBrake ? DcMotor.ZeroPowerBehavior.BRAKE : DcMotor.ZeroPowerBehavior.FLOAT);
+        shooterMotor2.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
     }
 
     private void applyTuning() {
@@ -269,6 +284,7 @@ public class ShooterController extends SubSystem {
         double filter = Math.max(0.01, Math.min(1, ShooterTuning.flywheelRpmFilter));
         RPM += filter * (rawRpm - RPM);
         if (ShotControlTuning.shooterMotorReversed != appliedReversed) applyMotorDirection();
+        if (ShotControlTuning.shooterBrakeOnZero != appliedBrake) applyBrake();
         flywheelBackwards = flywheelPower > 0.3 && RPM < -300;
 
         if (targeting && turretDebugMode == TurretDebugMode.CLOSED_LOOP) {
@@ -300,6 +316,7 @@ public class ShooterController extends SubSystem {
 
             flywheelPower = flywheel.update(targetRPM, RPM, dt);
             shooterMotor.update(flywheelPower);
+            shooterMotor2.update(flywheelPower);
 
         } else {
             stopFlywheel();
@@ -333,6 +350,7 @@ public class ShooterController extends SubSystem {
         flywheelPower = Math.max(0, Math.min(1, manualFlywheelPower));
         flywheel.reset();
         shooterMotor.update(flywheelPower);
+        shooterMotor2.update(flywheelPower);
     }
 
 

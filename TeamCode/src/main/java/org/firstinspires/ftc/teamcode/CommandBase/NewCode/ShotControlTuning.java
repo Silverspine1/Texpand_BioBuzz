@@ -27,6 +27,13 @@ public class ShotControlTuning {
      *  (commit 'reverse', old shooter) ran the under-shooter wheel backwards on the first robot test (2026-11-01). Flip it
      *  on the Dashboard if the wheel spins the wrong way; Shot Tuner shows a BACKWARDS warning. */
     public static boolean shooterMotorReversed = false;
+    /** Second flywheel motor ("shooterMotor2", same belt, same power). false = same direction as shooterMotor (what Deez does: both
+     *  FORWARD). true = the opposite direction to shooterMotor. */
+    public static boolean shooterMotor2Opposite = false;
+    /** GENTLE EXTRA SPIN-DOWN: shooterMotor uses ZeroPowerBehavior BRAKE, shooterMotor2 FLOAT. When the wheel is above its target the
+     *  controller outputs power 0 and only ONE motor brakes (no reverse power), so the wheel slows a little faster than coasting.
+     *  false = both motors float (pure coast). */
+    public static boolean shooterBrakeOnZero = true;
     public static boolean blueAlliance = true;
 
     // Wheel ceiling per battery (R4): rpm_max = min(model rpm_max, fraction x no-load rpm x V / 12). States that need
