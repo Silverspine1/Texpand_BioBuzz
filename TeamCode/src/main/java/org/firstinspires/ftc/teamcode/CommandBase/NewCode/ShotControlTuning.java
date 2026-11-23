@@ -30,6 +30,9 @@ public class ShotControlTuning {
     /** Second flywheel motor ("shooterMotor2", same belt, same power). false = same direction as shooterMotor (what Deez does: both
      *  FORWARD). true = the opposite direction to shooterMotor. */
     public static boolean shooterMotor2Opposite = false;
+    /** false = the second motor is NOT used at all (not even looked up in the hub config): a one-motor fallback / a way to test whether
+     *  the second motor (extra current, or a config problem) is behind a robot restart. */
+    public static boolean useSecondMotor = true;
     /** GENTLE EXTRA SPIN-DOWN: shooterMotor uses ZeroPowerBehavior BRAKE, shooterMotor2 FLOAT. When the wheel is above its target the
      *  controller outputs power 0 and only ONE motor brakes (no reverse power), so the wheel slows a little faster than coasting.
      *  false = both motors float (pure coast). */
