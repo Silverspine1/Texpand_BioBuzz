@@ -49,7 +49,7 @@ public final class ShotDebug {
             out.accept("range to goal", f("%.0f cm  (%.1f in)", r.result.d * ShotFrame.CM_PER_IN, r.result.d));
             out.accept("turret  cmd / now / err", f("%.1f / %.1f / %.1f deg", r.turretJavaDeg, sc.getTurretAimDeg(), r.lastTurretErr));
             out.accept("wheel  rpm now / cmd", f("%.0f / %.0f  %s", sc.RPM, r.rpmCmd, sc.flywheelReady() ? "READY" : ""));
-            out.accept("hood", f("%.1f of 6.3 deg -> servo %.3f%s", sc.hoodTargetDeg, sc.hoodServoPos,
+            out.accept("hood", f("%.1f of %.1f..%.1f deg -> servo %.3f%s", sc.hoodTargetDeg, ShotControlTuning.hoodMinDeg, ShotControlTuning.hoodMaxDeg, sc.hoodServoPos,
                     ShotControlTuning.hoodDebug ? "   HOOD DEBUG (gamepad2 Y = off)" : ""));
         }
         if (msg != null && !msg.isEmpty()) out.accept("last action", msg);
@@ -157,13 +157,13 @@ public final class ShotDebug {
                     r.rpmScaleUsed, r.rpmMaxEff));
             out.accept("moving compensation", f("rpm/hood solved %.0f ms ahead (mechDelayS)   accel %.0f, %.0f in/s^2 (%s)",
                     1000.0 * ShotControlTuning.mechDelayS, r.accelX, r.accelY, ShotControlTuning.useAcceleration ? "used" : "OFF"));
-            out.accept("exit angle wanted (model) / offset", f("%.1f deg / %+.1f deg  (hood %.2f of 0..6.3)", r.result.angle,
-                    ShotControlTuning.angleOffsetDeg, r.hoodDeg));
-            out.accept("hood cmd", f("%.2f of 6.3 deg travel at range %.0f in -> servo %.4f%s  (rises inside ~54 in, fully up inside ~33 in)",
-                    r.hoodDeg, r.result.d, sc.hoodServoPos, ShotControlTuning.hoodDebug ? "  HOOD DEBUG" : ""));
+            out.accept("exit angle wanted (model) / offset", f("%.1f deg / %+.1f deg  (hood %.2f of %.1f..%.1f)", r.result.angle,
+                    ShotControlTuning.angleOffsetDeg, r.hoodDeg, ShotControlTuning.hoodMinDeg, ShotControlTuning.hoodMaxDeg));
+            out.accept("hood cmd", f("%.2f of %.1f..%.1f deg travel at range %.0f in -> servo %.4f%s",
+                    r.hoodDeg, ShotControlTuning.hoodMinDeg, ShotControlTuning.hoodMaxDeg, r.result.d, sc.hoodServoPos, ShotControlTuning.hoodDebug ? "  HOOD DEBUG" : ""));
             out.accept("hood ends", ShotControlTuning.hoodLine());
         }
         out.accept("SCALE CHECK", "hold gamepad2 RIGHT TRIGGER (Shot Tuner) / Test_tele R-trigger = full power with the turret idle: no-load rpm "
-                + "should read ~5700-6000. About HALF = flywheelTicksPerRev is 2x too big (or 2 motors / a 2:1 ratio); about DOUBLE = too small.");
+                + "should read ~7000-7500 (5800 motor rpm x 29/24). About HALF = flywheelTicksPerRev is 2x too big; about DOUBLE = too small.");
     }
 }

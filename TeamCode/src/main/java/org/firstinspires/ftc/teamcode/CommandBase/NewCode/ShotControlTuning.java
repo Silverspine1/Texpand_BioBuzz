@@ -13,7 +13,7 @@ import java.util.Properties;
  * The only shot command source (the old Shotplanner is deleted).
  * Edit live in FTC Dashboard; gamepad2 START in Test_tele saves to {@code /sdcard/FIRST/settings/shot_control.properties}.
  *
- * <p>Model: ONE file, {@code robot_model_red_audience_r11.json}, built into the app (TeamCode/src/main/assets/). Nothing on the
+ * <p>Model: ONE file, {@code robot_model_red_audience_r12.json}, built into the app (TeamCode/src/main/assets/). Nothing on the
  * hub overrides it (no /sdcard model, no field-tune export); to change the model replace that asset and rebuild.
  */
 @Config
@@ -30,9 +30,9 @@ public class ShotControlTuning {
     public static boolean blueAlliance = true;
 
     // Wheel ceiling per battery (R4): rpm_max = min(model rpm_max, fraction x no-load rpm x V / 12). States that need
-    // more become infeasible (claim 0) instead of leaving low. No-load 5700 is the sim's flywheel model: MEASURE.
+    // more become infeasible (claim 0) instead of leaving low. No-load 7000 = goBILDA bare motor tested 5800 rpm x 29/24 belt: MEASURE.
     public static boolean rpmMaxFromBattery = true;
-    public static double wheelNoLoadRpmAt12V = 5700;
+    public static double wheelNoLoadRpmAt12V = 7000;
     public static double rpmMaxNoLoadFraction = 0.98;
 
     // Turret axis: true = ShooterTuning.turretAxisForwardMeters / turretAxisSidewaysMeters (offset from the
@@ -119,14 +119,17 @@ public class ShotControlTuning {
     // Turret aim trim (not a model value): hold gamepad2 LEFT TRIGGER + D-pad LEFT / RIGHT.
     public static double turretTrimDeg = 0.0;
 
-    // Hood: travel 0..6.3 deg (lower stop = 0) -> servo degrees. 48/40 gears: 1.2 servo deg per hood deg. MEASURE.
+    // Hood: travel -0.5 .. 24.2 deg (the stops from the two-motor CAD interference sweep) -> servo. 48/40 gears: 1.2 servo deg per hood deg.
+    public static double hoodMinDeg = -0.5;
+    public static double hoodMaxDeg = 24.2;
     public static double hoodServoAtZeroDeg = 0.0;
     public static double hoodServoDegPerHoodDeg = 1.2;
-    // Hood servo in plain 0..1 servo units, written straight to the servo. BOTTOM = far shots (flattest, hood travel 0),
-    // TOP = near shots (steepest, travel 6.3 deg). Measured in the Deez program (same servo, same raw setPosition).
-    // (New names, so values saved under older names are not loaded.)
+    // Hood servo in plain 0..1 servo units, written straight to the servo. BOTTOM = the hood at hoodMinDeg (flattest, far shots),
+    // TOP = the hood at hoodMaxDeg (steepest, near shots).  ESTIMATE for the NEW hood (2026-11-23): the old lower-stop reading 0.182
+    // plus the old servo scale (0.036 per 6.3 hood deg) over the new 24.7 deg travel.  MEASURE both with the hood debug mode
+    // (gamepad2 Y: D-pad moves the servo, jog until the hood touches each stop) before trusting any shot.
     public static double hoodBottomPos = 0.182;
-    public static double hoodTopPos = 0.218;
+    public static double hoodTopPos = 0.323;
     // HOOD DEBUG (gamepad2 Y toggles it, Shot Tuner and Test_tele; works like Deez): the hood servo gets hoodDebugPos, the
     // targeting no longer moves the hood. D-pad UP / DOWN = +/- 0.001, D-pad RIGHT = hoodTopPos, D-pad LEFT = hoodBottomPos.
     // The other trim buttons are off while it is on. Never restored from the saved file (always starts OFF).

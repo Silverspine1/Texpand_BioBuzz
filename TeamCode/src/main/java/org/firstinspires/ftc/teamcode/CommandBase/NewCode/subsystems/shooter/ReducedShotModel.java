@@ -35,8 +35,8 @@ public final class ReducedShotModel {
     /** Default file names in /sdcard/FIRST/settings/ (the model name is configurable: ShotControlTuning.modelFile). */
     public static final String MODEL_FILE = "robot_model_red_audience.json";
     /** Recommended model (review R4: aim table with P(stay in cell), bearing calibration folded into occ.f). The robot loads
-     *  {@code ShooterController.BUILT_IN_MODEL} from the app assets (currently r11: rising entries accepted, 2026-11-04). */
-    public static final String MODEL_FILE_R4 = "robot_model_red_audience_r11.json";
+     *  {@code ShooterController.BUILT_IN_MODEL} from the app assets (currently r12: the two-motor shooter, raw contact sim, no measured corrections, 2026-11-23). */
+    public static final String MODEL_FILE_R4 = "robot_model_red_audience_r12.json";
     public static final String FIELD_TUNE_FILE = "under_shooter_field_tune.json";
 
     // ---- constants --------------------------------------------------------------------------------------------
