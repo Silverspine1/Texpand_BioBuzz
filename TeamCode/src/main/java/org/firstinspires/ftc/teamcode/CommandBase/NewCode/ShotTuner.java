@@ -153,7 +153,6 @@ public class ShotTuner extends OpModeEX {
         driveBase.driveFieldCentric(-gamepad1.right_stick_y, gamepad1.right_stick_x, (gamepad1.left_trigger/2 - gamepad1.right_trigger/2),
                 odometry.Heading(), ShotControlTuning.blueAlliance, ShotControlTuning.fieldDriveOffsetDeg);
         IntakeHardware.Vertical = driveBase.vertical;
-        if (!lastGamepad1.dpad_up && currentGamepad1.dpad_up && !flyTest) shooterController.targeting = !shooterController.targeting;
         if (!lastGamepad1.right_stick_button && currentGamepad1.right_stick_button) {
             odometry.setPose(ShooterTuning.startXcm, ShooterTuning.startYcm, ShooterTuning.startHeadingDeg);
             status = "pose set";
@@ -187,7 +186,7 @@ public class ShotTuner extends OpModeEX {
         if (!lastGamepad2.x && currentGamepad2.x) label(ShotCsv.LONG);
         if (!lastGamepad2.left_bumper && currentGamepad2.left_bumper) label(ShotCsv.LEFT);
         if (!lastGamepad2.right_bumper && currentGamepad2.right_bumper) label(ShotCsv.RIGHT);
-        String trim = ShotControlTuning.trimButtons(currentGamepad2, lastGamepad2);
+        String trim = ShotControlTuning.trimButtons(currentGamepad1, lastGamepad1);
         if (trim != null) status = trim + "  (gamepad2 START saves)";
         if (!lastGamepad2.left_stick_button && currentGamepad2.left_stick_button) {
             shooterController.loadReducedModel();
@@ -196,7 +195,7 @@ public class ShotTuner extends OpModeEX {
         if (!lastGamepad2.right_stick_button && currentGamepad2.right_stick_button) {
             status = "goal side: " + ShotControlTuning.cycleGoalSide() + "  (gamepad2 START saves)";
         }
-        if (!lastGamepad2.start && currentGamepad2.start) status = ShotControlTuning.saveAll();
+        if (!lastGamepad1.start && currentGamepad1.start) status = ShotControlTuning.saveAll();
 
         telemetryBlock(r, now, applicable);
         dash.update();
