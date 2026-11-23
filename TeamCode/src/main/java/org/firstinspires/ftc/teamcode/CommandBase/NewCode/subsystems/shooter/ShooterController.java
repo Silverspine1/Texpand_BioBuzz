@@ -1,7 +1,9 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter;
 
 import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
+import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 import com.qualcomm.robotcore.util.ElapsedTime;
@@ -49,6 +51,7 @@ public class ShooterController extends SubSystem {
     /** Second flywheel motor: same power as shooterMotor, no encoder use (the speed is read from shooterMotor's encoder). */
     public MotorEx shooterMotor2 = new MotorEx();
     private boolean appliedBrake = true;
+    private boolean secondMotorOn = false;
     double targetRPM = 0;
     public double RPM;
     public double flywheelPower = 0;
@@ -105,7 +108,8 @@ public class ShooterController extends SubSystem {
         ShotControlTuning.hoodDebug = false;
 
         shooterMotor.initMotor("shooterMotor", getOpMode().hardwareMap);
-        shooterMotor2.initMotor("shooterMotor2", getOpMode().hardwareMap);
+        secondMotorOn = ShotControlTuning.useSecondMotor;
+        if (secondMotorOn) shooterMotor2.initMotor("shooterMotor2", getOpMode().hardwareMap);
         applyBrake();
 
         turretServo1 = getOpMode().hardwareMap.get(Servo.class, "turretServo1");
@@ -219,14 +223,18 @@ public class ShooterController extends SubSystem {
         appliedReversed = ShotControlTuning.shooterMotorReversed;
         shooterMotor.setDirection(appliedReversed ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
         boolean rev2 = appliedReversed != ShotControlTuning.shooterMotor2Opposite;
-        shooterMotor2.setDirection(rev2 ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
+        if (secondMotorOn) shooterMotor2.setDirection(rev2 ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
     }
 
-    /** One motor brakes at zero power, the other floats: gentle extra deceleration, never a reverse power. */
+    /** One motor brakes at zero power, the other floats: gentle extra deceleration, never a reverse power.
+     *  Uses the hardware DcMotorEx directly: the MotorEx class that actually runs on the robot comes from the Nexus_Command_Base
+     *  library (it shadows TeamCode's copy) and has no setZeroPowerBehavior, so calling it there is a NoSuchMethodError that kills the app. */
     private void applyBrake() {
         appliedBrake = ShotControlTuning.shooterBrakeOnZero;
-        shooterMotor.setZeroPowerBehavior(appliedBrake ? DcMotor.ZeroPowerBehavior.BRAKE : DcMotor.ZeroPowerBehavior.FLOAT);
-        shooterMotor2.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+        HardwareMap hw = getOpMode().hardwareMap;
+        DcMotorEx m1 = hw.get(DcMotorEx.class, "shooterMotor");
+        m1.setZeroPowerBehavior(appliedBrake ? DcMotor.ZeroPowerBehavior.BRAKE : DcMotor.ZeroPowerBehavior.FLOAT);
+        if (secondMotorOn) hw.get(DcMotorEx.class, "shooterMotor2").setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
     }
 
     private void applyTuning() {
@@ -316,7 +324,7 @@ public class ShooterController extends SubSystem {
 
             flywheelPower = flywheel.update(targetRPM, RPM, dt);
             shooterMotor.update(flywheelPower);
-            shooterMotor2.update(flywheelPower);
+            if (secondMotorOn) shooterMotor2.update(flywheelPower);
 
         } else {
             stopFlywheel();
@@ -350,7 +358,7 @@ public class ShooterController extends SubSystem {
         flywheelPower = Math.max(0, Math.min(1, manualFlywheelPower));
         flywheel.reset();
         shooterMotor.update(flywheelPower);
-        shooterMotor2.update(flywheelPower);
+        if (secondMotorOn) shooterMotor2.update(flywheelPower);
     }
 
 
