@@ -58,6 +58,10 @@ public class MotorEx {
         motor.setDirection(direction);
     }
 
+    public void setZeroPowerBehavior(DcMotor.ZeroPowerBehavior behavior){
+        motor.setZeroPowerBehavior(behavior);
+    }
+
     public void setMode(DcMotor.RunMode runMode){
         motor.setMode(runMode);
     }

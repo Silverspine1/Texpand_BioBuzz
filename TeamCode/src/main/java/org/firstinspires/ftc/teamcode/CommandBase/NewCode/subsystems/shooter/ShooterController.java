@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.CommandBase.NewCode.subsystems.shooter;
 
+import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
@@ -34,7 +35,8 @@ public class ShooterController extends SubSystem {
     SetTurretAngle turretController;
 
     Servo hoodRaw;
-    /** HOOD COMMAND [deg of hood travel: 0 = bottom (far shots) .. 6.3 = top (near shots)]. Set from the reduced solve in
+
+    /** HOOD COMMAND [deg of hood travel, ShotControlTuning.hoodMinDeg .. hoodMaxDeg = -0.5 .. 24.2]. Set from the reduced solve in
      *  runReducedShot() and trackHood(); execute() turns it into a servo position and writes the servo EVERY loop. */
     public double hoodTargetDeg = 0.0;
     /** Hood servo position (0..1) written this loop, for the displays. */
@@ -44,6 +46,9 @@ public class ShooterController extends SubSystem {
     private double lastTurretCmd = Double.NaN;
 
     public MotorEx shooterMotor = new MotorEx();
+    /** Second flywheel motor: same power as shooterMotor, no encoder use (the speed is read from shooterMotor's encoder). */
+    public MotorEx shooterMotor2 = new MotorEx();
+    private boolean appliedBrake = true;
     double targetRPM = 0;
     public double RPM;
     public double flywheelPower = 0;
@@ -100,6 +105,8 @@ public class ShooterController extends SubSystem {
         ShotControlTuning.hoodDebug = false;
 
         shooterMotor.initMotor("shooterMotor", getOpMode().hardwareMap);
+        shooterMotor2.initMotor("shooterMotor2", getOpMode().hardwareMap);
+        applyBrake();
 
         turretServo1 = getOpMode().hardwareMap.get(Servo.class, "turretServo1");
         turretServo2 = getOpMode().hardwareMap.get(Servo.class, "turretServo2");
@@ -162,7 +169,7 @@ public class ShooterController extends SubSystem {
      * Then the optional field-tune export. Never throws: a bad file leaves no model (flywheel off, status says why).
      */
     /** The model file bundled in TeamCode/src/main/assets/ (fallback when ShotControlTuning.modelFile is not found). */
-    public static final String BUILT_IN_MODEL = "robot_model_red_audience_r11.json";
+    public static final String BUILT_IN_MODEL = "robot_model_red_audience_r12.json";
 
     /** One short line for the top of every display: model, targeting, range, hood command and the servo position written. */
     public String hoodStatusLine() {
@@ -170,8 +177,8 @@ public class ShooterController extends SubSystem {
         if (!reduced.hasModel()) {
             return String.format(java.util.Locale.US, "NO MODEL (%s) -> hood held at bottom, servo %.3f%s", reducedStatus, hoodServoPos, check);
         }
-        return String.format(java.util.Locale.US, "range %.0f in -> hood %.1f of 6.3 deg -> servo %.3f (bottom %.3f, top %.3f)  targeting %s%s",
-                reduced.result.d, hoodTargetDeg, hoodServoPos,
+        return String.format(java.util.Locale.US, "range %.0f in -> hood %.1f of %.1f..%.1f deg -> servo %.3f (bottom %.3f, top %.3f)  targeting %s%s",
+                reduced.result.d, hoodTargetDeg, ShotControlTuning.hoodMinDeg, ShotControlTuning.hoodMaxDeg, hoodServoPos,
                 ShotControlTuning.hoodBottomPos, ShotControlTuning.hoodTopPos, targeting ? "ON" : "OFF", check);
     }
 
@@ -211,6 +218,15 @@ public class ShooterController extends SubSystem {
     private void applyMotorDirection() {
         appliedReversed = ShotControlTuning.shooterMotorReversed;
         shooterMotor.setDirection(appliedReversed ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
+        boolean rev2 = appliedReversed != ShotControlTuning.shooterMotor2Opposite;
+        shooterMotor2.setDirection(rev2 ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
+    }
+
+    /** One motor brakes at zero power, the other floats: gentle extra deceleration, never a reverse power. */
+    private void applyBrake() {
+        appliedBrake = ShotControlTuning.shooterBrakeOnZero;
+        shooterMotor.setZeroPowerBehavior(appliedBrake ? DcMotor.ZeroPowerBehavior.BRAKE : DcMotor.ZeroPowerBehavior.FLOAT);
+        shooterMotor2.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
     }
 
     private void applyTuning() {
@@ -268,6 +284,7 @@ public class ShooterController extends SubSystem {
         double filter = Math.max(0.01, Math.min(1, ShooterTuning.flywheelRpmFilter));
         RPM += filter * (rawRpm - RPM);
         if (ShotControlTuning.shooterMotorReversed != appliedReversed) applyMotorDirection();
+        if (ShotControlTuning.shooterBrakeOnZero != appliedBrake) applyBrake();
         flywheelBackwards = flywheelPower > 0.3 && RPM < -300;
 
         if (targeting && turretDebugMode == TurretDebugMode.CLOSED_LOOP) {
@@ -299,6 +316,7 @@ public class ShooterController extends SubSystem {
 
             flywheelPower = flywheel.update(targetRPM, RPM, dt);
             shooterMotor.update(flywheelPower);
+            shooterMotor2.update(flywheelPower);
 
         } else {
             stopFlywheel();
@@ -332,6 +350,7 @@ public class ShooterController extends SubSystem {
         flywheelPower = Math.max(0, Math.min(1, manualFlywheelPower));
         flywheel.reset();
         shooterMotor.update(flywheelPower);
+        shooterMotor2.update(flywheelPower);
     }
 
 
@@ -450,9 +469,10 @@ public class ShooterController extends SubSystem {
         return reducedClock.seconds();
     }
 
-    /** Hood travel (0..6.3 deg above the lower stop) -> servo position 0..1 (ShotControlTuning.hoodBottomPos / hoodTopPos). */
+    /** Hood travel (hoodMinDeg..hoodMaxDeg) -> servo position 0..1 (ShotControlTuning.hoodBottomPos at the lower stop, hoodTopPos at the upper). */
     public static double underHoodServoPos(double hoodTravelDeg) {
-        double f = Math.max(0.0, Math.min(6.3, hoodTravelDeg)) / 6.3;
+        double lo = ShotControlTuning.hoodMinDeg, hi = ShotControlTuning.hoodMaxDeg;
+        double f = Math.max(0.0, Math.min(1.0, (hoodTravelDeg - lo) / (hi - lo)));
         return ShotControlTuning.hoodBottomPos + f * (ShotControlTuning.hoodTopPos - ShotControlTuning.hoodBottomPos);
     }
 

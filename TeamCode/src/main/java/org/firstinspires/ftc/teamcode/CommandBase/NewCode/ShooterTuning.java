@@ -41,8 +41,9 @@ public class ShooterTuning {
     public static boolean plannerUseAcceleration = false;
 
     // Flywheel: power = kF * targetRPM + kP * error + integral(kI * error)
-    // 1:1 goBILDA 6000 rpm motor is 28 ticks per rev. Check: full power with no load should read about 5800-6000 rpm.
-    public static double flywheelTicksPerRev = 16.4;
+    // Encoder on a motor: 28 ticks per MOTOR rev, the wheel turns 29/24 faster, so 28 x 24/29 = 23.172 ticks per WHEEL rev.
+    // Check: full power with no load should read about 7000-7500 wheel rpm.
+    public static double flywheelTicksPerRev = 23.172;
     public static double flywheelKF = 0.00014;
     public static double flywheelKP = 0.001;
     public static double flywheelKI = 0.0006;
