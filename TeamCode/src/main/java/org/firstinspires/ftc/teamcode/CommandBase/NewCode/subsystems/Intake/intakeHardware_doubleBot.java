@@ -105,8 +105,8 @@ import dev.weaponboy.nexus_command_base.Subsystem.SubSystem;
 
 
 
-          SBServo.setRange(355);
-          FServo.setRange(355);
+          SBServo.setRange(255);
+          FServo.setRange(255);
 
       }
 

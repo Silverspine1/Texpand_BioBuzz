@@ -83,18 +83,18 @@ public class DriveBase extends SubSystem implements PathLog.Extras {
     }
 
     public Command drivePowers(double vertical, double strafe, double turn) {
-        this.turn = -turn;
-        this.strafe = strafe;
-        this.vertical = vertical;
+        this.turn = turn;
+        this.strafe = -strafe;
+        this.vertical = -vertical;
 
         return driveCommand;
 
     }
 
     public Command drivePowers(RobotPower power) {
-        this.turn = -power.getPivot();
-        this.strafe = power.getHorizontal();
-        this.vertical = power.getVertical();
+        this.turn = power.getPivot();
+        this.strafe = -power.getHorizontal();
+        this.vertical = -power.getVertical();
 
         return driveCommand;
     }
@@ -106,10 +106,10 @@ public class DriveBase extends SubSystem implements PathLog.Extras {
                 long start = System.nanoTime();
                 double denominator = Math.max(1.0, Math.abs(vertical) + Math.abs(strafe) + Math.abs(turn));
 
-                double lfT = ((vertical + strafe + turn) / denominator) * speed;
-                double rfT = ((vertical - strafe - turn) / denominator) * speed;
-                double lbT = ((vertical - strafe + turn) / denominator) * speed;
-                double rbT = ((vertical + strafe - turn) / denominator) * speed;
+                double lfT = ((strafe + vertical - turn) / denominator) * speed;
+                double rfT = ((strafe - vertical + turn) / denominator) * speed;
+                double lbT = ((strafe - vertical - turn) / denominator) * speed;
+                double rbT = ((strafe + vertical + turn) / denominator) * speed;
 
                 long now = System.nanoTime();
                 double dt = lastShapeNanos == 0 ? 0.02 : Math.min(0.1, (now - lastShapeNanos) / 1e9);

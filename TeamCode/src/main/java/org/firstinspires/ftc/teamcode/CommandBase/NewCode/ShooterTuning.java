@@ -43,7 +43,7 @@ public class ShooterTuning {
     // Flywheel: power = kF * targetRPM + kP * error + integral(kI * error)
     // Encoder on a motor: 28 ticks per MOTOR rev, the wheel turns 29/24 faster, so 28 x 24/29 = 23.172 ticks per WHEEL rev.
     // Check: full power with no load should read about 7000-7500 wheel rpm.
-    public static double flywheelTicksPerRev = 23.172;
+    public static double flywheelTicksPerRev = 22.5;
     public static double flywheelKF = 0.00014;
     public static double flywheelKP = 0.001;
     public static double flywheelKI = 0.0006;
@@ -54,8 +54,8 @@ public class ShooterTuning {
     public static double flywheelReadyPercent = 3.0;
 
     // Start pose used by Test_tele / Shot Tuner at init and by their set-pose button (cm, degrees)
-    public static double startXcm = 32;
-    public static double startYcm = 336;
+    public static double startXcm = 21;
+    public static double startYcm = 342;
     public static double startHeadingDeg = 0;
 
     private static String loadStatus = "shooter: not loaded yet";

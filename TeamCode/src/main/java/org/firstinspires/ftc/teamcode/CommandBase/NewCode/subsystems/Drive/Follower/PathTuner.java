@@ -135,8 +135,8 @@ public class PathTuner extends OpModeEX {
         private static final double CX = 180, CY = 180;
 
         // operator-adjustable (IDLE only): test power and tuning-area side length
-        private double maxPower = 0.7;
-        private double areaSize = 210;   // cm, square centred on (CX, CY)
+        private double maxPower = 0.9;
+        private double areaSize = 200;   // cm, square centred on (CX, CY)
         private static final double POWER_STEP = 0.05, POWER_MIN = 0.2;
         private static final double AREA_STEP = 10, AREA_MIN = 120, AREA_MAX = 340;
 
