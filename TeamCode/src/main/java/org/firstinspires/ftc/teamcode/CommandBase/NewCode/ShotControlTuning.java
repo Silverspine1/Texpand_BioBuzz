@@ -189,6 +189,11 @@ public class ShotControlTuning {
     public static double detectMinDropRpm = 40.0;
     public static double burstResetS = 0.8;
 
+    // The defaults written in the code, taken here (after every tunable field above). A saved value is applied only while the code
+    // default is still the one it was saved against, so editing a number in this file always wins.
+    private static final java.util.Map<String, String> DEFAULTS = TuningIO.snapshot(ShotControlTuning.class, true);
+    private static boolean loadedOnce = false;
+
     // Not restored from the saved file: the new controller always starts OFF, the movement protection always starts ON, the hood
     // debug always starts OFF (and its position is only a scratch value).
     private static final String[] NOT_RESTORED = {"enabled", "gateProtect", "hoodDebug", "hoodDebugPos"};
@@ -202,9 +207,14 @@ public class ShotControlTuning {
     /** Saves ShotControlTuning (shot_control.properties); the file is read back and compared. Returns the count written. */
     public static int save() throws IOException {
         File file = AppUtil.getInstance().getSettingsFile(FILE_NAME);
-        int n = TuningIO.save(ShotControlTuning.class, file, "Shot control tune", true, SETTINGS_VERSION);
-        saveStatus = "shot_control: wrote " + n + " values to " + file.getPath() + " (read back OK)";
-        return n;
+        try {
+            int n = TuningIO.save(ShotControlTuning.class, file, "Shot control tune", true, SETTINGS_VERSION, DEFAULTS);
+            saveStatus = "shot_control: wrote " + n + " values to " + file.getPath() + " (read back OK)";
+            return n;
+        } catch (IOException | RuntimeException e) {
+            saveStatus = "shot_control: SAVE FAILED (" + e + ")";
+            throw e;
+        }
     }
 
     /**
@@ -212,14 +222,20 @@ public class ShotControlTuning {
      * it says SAVE FAILED with the reason when either file could not be written or read back.
      */
     public static String saveAll() {
+        // each file is saved on its own: one failing never stops the other, and the text says which one worked
+        boolean ok1 = true, ok2 = true;
         try {
             ShooterTuning.save();
-            save();
-            return "SAVED. " + saveStatus + " | " + ShooterTuning.saveStatus();
         } catch (Throwable t) {
-            saveStatus = "SAVE FAILED: " + t.getMessage();
-            return saveStatus;
+            ok1 = false;
         }
+        try {
+            save();
+        } catch (Throwable t) {
+            ok2 = false;
+        }
+        String head = ok1 && ok2 ? "SAVED. " : "!!! SAVE PROBLEM (" + (ok1 ? "" : "shooter FAILED ") + (ok2 ? "" : "shot_control FAILED") + "): ";
+        return head + saveStatus + " | " + ShooterTuning.saveStatus();
     }
 
     /** What the last load / save did, for the top of every display (so you can see the hub really has your numbers). */
@@ -229,6 +245,8 @@ public class ShotControlTuning {
 
     /** Loads saved values over the defaults (see NOT_RESTORED). Returns how many were applied; the details are in settingsLine(). */
     public static int load() {
+        if (loadedOnce) return 0;     // once per app process: later inits must not overwrite what you edited in the Dashboard since
+        loadedOnce = true;
         try {
             File file = AppUtil.getInstance().getSettingsFile(FILE_NAME);
             if (!file.exists()) {
@@ -242,7 +260,7 @@ public class ShotControlTuning {
                         + " -> IGNORED this run, built-in defaults (save to keep them)";
                 return 0;
             }
-            TuningIO.Loaded r = TuningIO.load(ShotControlTuning.class, saved, true, NOT_RESTORED, new String[0], false);
+            TuningIO.Loaded r = TuningIO.load(ShotControlTuning.class, saved, true, NOT_RESTORED, new String[0], false, DEFAULTS);
             loadStatus = TuningIO.describe("shot_control", file, r);
             return r.applied;
         } catch (Throwable t) {

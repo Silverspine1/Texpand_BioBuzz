@@ -58,6 +58,11 @@ public class ShooterTuning {
     public static double startYcm = 342;
     public static double startHeadingDeg = 0;
 
+    // The defaults written in the code, taken here (after every tunable field above, before anything can edit them). A saved value is
+    // applied only while the code default is still the one it was saved against, so editing a number in this file always wins.
+    private static final java.util.Map<String, String> DEFAULTS = TuningIO.snapshot(ShooterTuning.class, false);
+    private static boolean loadedOnce = false;
+
     private static String loadStatus = "shooter: not loaded yet";
     private static String saveStatus = "shooter: not saved yet";
 
@@ -68,13 +73,20 @@ public class ShooterTuning {
     /** Saves ShooterTuning (shooter_tune.properties); the file is read back and compared. */
     public static int save() throws IOException {
         File file = AppUtil.getInstance().getSettingsFile(FILE_NAME);
-        int n = TuningIO.save(ShooterTuning.class, file, "Shooter tune", false, SETTINGS_VERSION);
-        saveStatus = "shooter: wrote " + n + " values to " + file.getPath() + " (read back OK)";
-        return n;
+        try {
+            int n = TuningIO.save(ShooterTuning.class, file, "Shooter tune", false, SETTINGS_VERSION, DEFAULTS);
+            saveStatus = "shooter: wrote " + n + " values to " + file.getPath() + " (read back OK)";
+            return n;
+        } catch (IOException | RuntimeException e) {
+            saveStatus = "shooter: SAVE FAILED (" + e + ")";
+            throw e;
+        }
     }
 
     /** Loads any saved values over the defaults. Returns how many were applied; the details are in ShotControlTuning.settingsLine(). */
     public static int load() {
+        if (loadedOnce) return 0;     // once per app process: later inits must not overwrite what you edited in the Dashboard since
+        loadedOnce = true;
         try {
             File file = AppUtil.getInstance().getSettingsFile(FILE_NAME);
             if (!file.exists()) {
@@ -87,7 +99,7 @@ public class ShooterTuning {
                         + " -> IGNORED this run, built-in defaults (save to keep them)";
                 return 0;
             }
-            TuningIO.Loaded r = TuningIO.load(ShooterTuning.class, p, false, new String[0], new String[0], false);
+            TuningIO.Loaded r = TuningIO.load(ShooterTuning.class, p, false, new String[0], new String[0], false, DEFAULTS);
             loadStatus = TuningIO.describe("shooter", file, r);
             return r.applied;
         } catch (Throwable t) {
