@@ -83,21 +83,48 @@ public class DriveBase extends SubSystem implements PathLog.Extras {
     }
 
     public Command drivePowers(double vertical, double strafe, double turn) {
-        this.turn = turn;
-        this.strafe = -strafe;
-        this.vertical = -vertical;
+        double[] in = toInternal(vertical, strafe, turn);
+        this.vertical = in[0];
+        this.strafe = in[1];
+        this.turn = in[2];
 
         return driveCommand;
 
     }
 
     public Command drivePowers(RobotPower power) {
-        this.turn = power.getPivot();
-        this.strafe = -power.getHorizontal();
-        this.vertical = -power.getVertical();
-
-        return driveCommand;
+        return drivePowers(power.getVertical(), power.getHorizontal(), power.getPivot());
     }
+
+    // ---- this robot's drive geometry: the ONLY two places to change for a different robot ----
+    // Everything else (the wheel-speed estimate for the braking ramp, the tuner's read-back of the
+    // powers the wheels got) is derived from these, so it can never disagree with the commands again.
+    // (It did after the switch to this robot: the estimate kept the old pattern, so the braking ramp
+    // clamped two of the four wheels while driving and the robot strafed off at high power.)
+
+    /** Command convention (vertical +fwd, strafe +right, pivot Nexus sign) -> this robot's internal values. */
+    private static double[] toInternal(double vertical, double strafe, double pivot) {
+        return new double[]{-vertical, -strafe, pivot};
+    }
+
+    /** Internal values -> wheel commands {LF, RF, LB, RB} (before the motor direction flips). */
+    private static void mix(double vertical, double strafe, double turn, double[] out) {
+        out[0] = strafe + vertical - turn;
+        out[1] = strafe - vertical + turn;
+        out[2] = strafe - vertical - turn;
+        out[3] = strafe + vertical + turn;
+    }
+
+    /** Wheel pattern (pre-flip) a pure unit command on one axis produces: 0 vertical, 1 strafe, 2 pivot. */
+    private static double[] unitPattern(int axis) {
+        double[] in = toInternal(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0);
+        double[] w = new double[4];
+        mix(in[0], in[1], in[2], w);
+        return w;
+    }
+
+    private static final double[][] UNIT = {unitPattern(0), unitPattern(1), unitPattern(2)};
+    private final double[] mixBuf = new double[4];
 
     LambdaCommand driveCommand = new LambdaCommand(
             () -> {
@@ -106,10 +133,11 @@ public class DriveBase extends SubSystem implements PathLog.Extras {
                 long start = System.nanoTime();
                 double denominator = Math.max(1.0, Math.abs(vertical) + Math.abs(strafe) + Math.abs(turn));
 
-                double lfT = ((strafe + vertical - turn) / denominator) * speed;
-                double rfT = ((strafe - vertical + turn) / denominator) * speed;
-                double lbT = ((strafe - vertical - turn) / denominator) * speed;
-                double rbT = ((strafe + vertical + turn) / denominator) * speed;
+                mix(vertical, strafe, turn, mixBuf);
+                double lfT = (mixBuf[0] / denominator) * speed;
+                double rfT = (mixBuf[1] / denominator) * speed;
+                double lbT = (mixBuf[2] / denominator) * speed;
+                double rbT = (mixBuf[3] / denominator) * speed;
 
                 long now = System.nanoTime();
                 double dt = lastShapeNanos == 0 ? 0.02 : Math.min(0.1, (now - lastShapeNanos) / 1e9);
@@ -163,13 +191,11 @@ public class DriveBase extends SubSystem implements PathLog.Extras {
             fwd = vy * Math.sin(h) + vx * Math.cos(h);
             str = vy * Math.cos(h) - vx * Math.sin(h);
         }
+        // the command that would make the current motion (pivot < 0 turns heading up), mixed exactly like a command
         double wf = fwd / Math.max(1, PathingValues.SPEED_PER_POWER_FWD);
         double ws = str / Math.max(1, PathingValues.SPEED_PER_POWER_STR);
-        double wt = op.odometry.getHeadingVelocityDeg() / Math.max(1, PathingValues.SPEED_PER_POWER_TURN);
-        wheelSpeed[0] = wf + ws + wt;
-        wheelSpeed[1] = wf - ws - wt;
-        wheelSpeed[2] = wf - ws + wt;
-        wheelSpeed[3] = wf + ws - wt;
+        double wp = -op.odometry.getHeadingVelocityDeg() / Math.max(1, PathingValues.SPEED_PER_POWER_TURN);
+        for (int k = 0; k < 4; k++) wheelSpeed[k] = wf * UNIT[0][k] + ws * UNIT[1][k] + wp * UNIT[2][k];
     }
 
     /** Side-balance gain for one wheel, never more than MAX_SIDE_TRIM from 1. */
@@ -214,8 +240,14 @@ public class DriveBase extends SubSystem implements PathLog.Extras {
      *  drive execute (after side trim and the braking ramp). Turn + = heading
      *  increasing. */
     public double[] appliedAxisPowers() {
-        double lf = wheelOut[0], rf = wheelOut[1], lb = wheelOut[2], rb = wheelOut[3];
-        return new double[]{(lf + rf + lb + rb) / 4, (lf - rf - lb + rb) / 4, (lf - rf + lb - rb) / 4};
+        // project the wheel outputs on each axis' wheel pattern (the patterns are orthogonal)
+        double[] c = new double[3];
+        for (int a = 0; a < 3; a++) {
+            double dot = 0, nn = 0;
+            for (int k = 0; k < 4; k++) { dot += wheelOut[k] * UNIT[a][k]; nn += UNIT[a][k] * UNIT[a][k]; }
+            c[a] = nn > 0 ? dot / nn : 0;
+        }
+        return new double[]{c[0], c[1], -c[2]};
     }
 
     /** Largest |wheel speed| fraction right now (for telemetry / tuning). */
