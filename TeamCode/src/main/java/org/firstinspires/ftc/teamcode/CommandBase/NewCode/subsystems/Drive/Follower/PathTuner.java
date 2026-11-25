@@ -87,6 +87,7 @@ public class PathTuner extends OpModeEX {
         private static final int    SETTLE_N        = 5;     // consecutive in-zone+stopped samples
         private static final int    OVERSHOOT_N     = 4;     // consecutive past-tol samples = real
         private static final double SAMPLE_DT_MIN   = 0.005;  // ~every loop
+        private static final double PUSH_MAX_YAW    = 30;     // deg an open-loop forward / strafe push may yaw
         private static final double PUSH_START_IN   = 30;     // cm inside the box edge the forward / strafe push starts from
         private static final double TAU_MIN = 0.05, TAU_MAX = 0.60;  // s - a fit outside this is a bad fit, not a drivetrain
         private static final double MODEL_R2_MIN = 0.75;             // regression fit accepted above this
@@ -530,7 +531,30 @@ public class PathTuner extends OpModeEX {
             plateauCount = 0;
             lastV = 0;
             modelSamples.clear();
+            PathLog.newRun();
+            PathLog.note("PUSH " + Ax.values()[axIdx]);
             state = State.MAXVA_PUSH;
+        }
+
+        /** Velocity along the axis under test, + = the push direction (pivot + turns heading down). */
+        private double axisVelocity() {
+            Ax a = Ax.values()[axIdx];
+            if (a == Ax.TURN) return -degPerSec();
+            double h = Math.toRadians(odometry.Heading());
+            double vx = odometry.getXVelocity(), vy = odometry.getYVelocity();
+            return a == Ax.FWD ? vy * Math.sin(h) + vx * Math.cos(h) : vy * Math.cos(h) - vx * Math.sin(h);
+        }
+
+        /** Open-loop phases log too (mode -1), so a push / brake can be seen in the CSV. */
+        private void logOpenLoop() {
+            double h = Math.toRadians(odometry.Heading());
+            double vx = odometry.getXVelocity(), vy = odometry.getYVelocity();
+            double[] ap = driveBase.appliedAxisPowers();
+            PathLog.row(0, 0, loopDt, -1, 0, 0,
+                    odometry.X(), odometry.Y(), odometry.Heading(), vx, vy,
+                    0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, vy * Math.sin(h) + vx * Math.cos(h), vy * Math.cos(h) - vx * Math.sin(h),
+                    ap[0], ap[1], -ap[2], 0, 0, degPerSec(), 0);
         }
 
         private void runMaxVaPush(boolean skip) {
@@ -545,8 +569,11 @@ public class PathTuner extends OpModeEX {
                 boxHit = outsideBox(Math.min(areaSize / 2 - 5, v * v / (2 * decel) + 8));
             }
             boolean timeUp = t >= MAXVA_MAX_TIME;
+            // an open-loop push that has yawed this far is driving across the field, not along the axis
+            boolean yawed = Ax.values()[axIdx] != Ax.TURN && Math.abs(pushTurned) > PUSH_MAX_YAW;
 
-            if (boxHit || timeUp || skip) { finishMaxVaRun(false); return; }
+            logOpenLoop();
+            if (boxHit || timeUp || yawed || skip) { finishMaxVaRun(false); return; }
 
             applyAxisPower(Ax.values()[axIdx], maxPower);
             recordModelSample(t);
@@ -593,6 +620,7 @@ public class PathTuner extends OpModeEX {
             brakeCoast = false;
             lastSampleT = 0;
             phaseTimer.reset();
+            PathLog.note("BRAKE " + Ax.values()[axIdx]);
             state = State.MAXVA_BRAKE;
         }
 
@@ -647,20 +675,26 @@ public class PathTuner extends OpModeEX {
          *  backwards. The decel measured here is what the path profile may demand. */
         private void runMaxVaBrake() {
             double t = phaseTimer.seconds();
-            double v = (Ax.values()[axIdx] == Ax.TURN)
+            double speed = (Ax.values()[axIdx] == Ax.TURN)
                     ? Math.abs(degPerSec())
                     : Math.hypot(odometry.getXVelocity(), odometry.getYVelocity());
-            if (v > brakeV0) brakeV0 = v;
-            if (v < 0.15 * brakeV0) brakeCoast = true;
+            // signed: once the robot has slowed to 15% - or is already moving backwards
+            // (a slow loop or sideways drift can skip the window) - reverse power stops.
+            // Speed alone missed the window and then drove backwards at full power.
+            double along = axisVelocity();
+            if (along > brakeV0) brakeV0 = along;
+            if (along < 0.15 * brakeV0) brakeCoast = true;
             if (brakeCoast) stopDrive();
             else applyAxisPower(Ax.values()[axIdx], -maxPower);
+            logOpenLoop();
+            double v = Math.max(0, along);
             recordModelSample(t + MAXVA_MAX_TIME + 1);
             double eps = (Ax.values()[axIdx] == Ax.TURN) ? stopEpsH : stopEpsT;
-            if (t - lastSampleT >= SAMPLE_DT_MIN && brakeSamples.size() < MAX_SAMPLES) {
+            if (!brakeCoast && t - lastSampleT >= SAMPLE_DT_MIN && brakeSamples.size() < MAX_SAMPLES) {
                 brakeSamples.add(new double[]{t, v});
                 lastSampleT = t;
             }
-            if (v < eps || t > BRAKE_MAX_TIME) {
+            if (speed < eps || t > BRAKE_MAX_TIME) {
                 double v0 = 0;
                 for (double[] s : brakeSamples) if (s[1] > v0) v0 = s[1];
                 double d = -slope(brakeSamples, 0.15 * v0, 0.85 * v0);
